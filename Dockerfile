@@ -68,10 +68,24 @@ RUN sh /tmp/prepare-modules.sh /tmp/modules /staged
 COPY recam/ /staged/system/etc/recam/
 RUN chmod 0755 /staged/system/etc/recam/recam
 
+# ---------------------------------------------------------------- 静态 SQLite 工具
+# Android 自带的 sqlite3 在 reDroid 上会因 ICU 数据问题 abort；这里静态链接一个
+# 无 ICU 的 SQLite 执行器，用于首启写入 LSPosed 配置。
+FROM debian:bookworm-slim AS tool
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libc6-dev libsqlite3-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY docker/sqlrun.c /sqlrun.c
+RUN gcc -O2 -static -o /sqlrun /sqlrun.c -lsqlite3 -lpthread -ldl -lm \
+ && chmod 0755 /sqlrun
+
 # ---------------------------------------------------------------- 最终镜像
 FROM redroid
 
 COPY --from=prep /staged/ /
+COPY --from=tool /sqlrun /system/etc/droid-kit/sqlrun
 
 LABEL org.opencontainers.image.title="droid-kit" \
       org.opencontainers.image.description="Android 13 container image based on reDroid, with Magisk (Zygisk) and anti-detection modules preloaded" \

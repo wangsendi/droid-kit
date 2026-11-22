@@ -2,7 +2,7 @@
 
 反检测 Android 容器模板（Android 13，基于 reDroid）。
 
-镜像内置 Magisk（Delta 系 v31.1，含 Zygisk 支持）与全部反检测模块资产，首次启动自动完成安装并加载（无需重启容器）。Magisk 集成方案来自社区已验证实现 [ayasa520/redroid-script](https://github.com/ayasa520/redroid-script)。
+镜像内置 Magisk（Delta 系 v31.1，含 Zygisk 支持）与全部反检测模块资产，首次启动自动完成安装、默认启用并写入作用域（容器无需重启；LSPosed 启动后 system_server 软重启一次）。Magisk 集成方案来自社区已验证实现 [ayasa520/redroid-script](https://github.com/ayasa520/redroid-script)。
 
 启动流程与实测记录见 [docs/BOOT.md](docs/BOOT.md)。
 
@@ -14,7 +14,7 @@
 | Root 隐藏    | Shamiko                            |
 | 应用列表隐藏 | HMA-OSS（Zygisk 版，无需 LSPosed） |
 | 摄像头       | ReCam                              |
-| WiFi         | fake_wifi                          |
+| WiFi         | Waydroid Network Spoof（Xposed，需 LSPosed） |
 | GPS          | GPS Setter（Xposed，需 LSPosed）   |
 | 传感器       | FakeSensor（Xposed，需 LSPosed）   |
 
@@ -44,7 +44,7 @@ droid-kit/
 | HMA-OSS-zygisk.zip    | Magisk（Zygisk）     | https://github.com/frknkrc44/HMA-OSS/releases                    |
 | GPS-Setter.apk        | Xposed（需 LSPosed） | https://github.com/Xposed-Modules-Repo/com.android1500.gpssetter |
 | FakeSensor.apk        | Xposed（需 LSPosed） | https://github.com/qilin7762-netizen/FakeSensor                  |
-| fake_wifi.zip         | 待补充               | 待补充                                                           |
+| WaydroidNetworkSpoof.apk | Xposed（需 LSPosed） | https://github.com/arkaroy14/waydroid_network_spoof/releases  |
 
 一键下载（已验证的版本组合，可按需换成新版本）：
 
@@ -56,6 +56,7 @@ curl -fLO https://github.com/osm0sis/PlayIntegrityFork/releases/download/v19/Pla
 curl -fLO https://github.com/frknkrc44/HMA-OSS/releases/download/oss-177/HMA-OSS-ZYGISK-oss-177-release.zip
 curl -fL -o GPS-Setter.apk https://github.com/Xposed-Modules-Repo/com.android1500.gpssetter/releases/download/v1.2.8/app-release.apk
 curl -fL -o FakeSensor.apk https://github.com/qilin7762-netizen/FakeSensor/releases/download/v1.0.0/app-debug.apk
+curl -fL -o WaydroidNetworkSpoof.apk https://github.com/arkaroy14/waydroid_network_spoof/releases/download/20260317-1.2.0/WaydroidNetworkSpoof-v1.2.0.apk
 ```
 
 > 构建脚本会自动区分两类模块：含 `module.prop` 的 zip 作为 Magisk 模块解包打入；APK 作为 Xposed 模块打入（启动时自动 `pm install`）。模块更新频繁，建议固定 release 版本。
@@ -90,7 +91,7 @@ PLATFORM=linux/arm64 ./build.sh   # arm64（recam/ 需换成 arm64 版）
 3. 模块 zip 与 Xposed APK 原样打入镜像
 4. 首启在运行中的 Android 内执行 `customize.sh` 和 `pm install`
 
-因此构建很快，不需要 binder；模块安装全部发生在容器首次启动时。
+构建还会编译一个静态 `sqlrun`，用于首启写入 LSPosed 配置（Android 自带 `sqlite3` 在 reDroid 上会因 ICU 数据问题崩溃）。因此构建不需要 binder；模块安装全部发生在容器首次启动时。
 
 ## 运行
 
@@ -106,7 +107,7 @@ docker run -itd --rm --privileged \
 
 > vold 启动时要求 `/data/media` 支持 POSIX ACL。脚本会在 `post-fs-data` 阶段自动给它挂一个 tmpfs，避免 Docker overlayfs（尤其是底层 ZFS 未开启 `acltype=posixacl` 时）导致用户数据目录创建失败、系统重启循环。代价是内部存储（sdcard）不持久；需要持久化时可改为 bind mount 一个 ext4/xfs 目录。
 
-镜像只包含系统资产；首次启动会自动安装模块与 Xposed 应用，**开机即用，无需重启**。
+镜像只包含系统资产；首次启动会自动安装模块与 Xposed 应用，并在 LSPosed 中默认启用/作用域，**无需重启容器**（LSPosed 启动后 system_server 会软重启一次）。
 
 需要持久化数据（应用、配置跨容器保留）时再挂载卷：
 
@@ -116,7 +117,7 @@ docker run -itd --privileged --name droid-kit \
   -v "$(pwd)/data":/data -p 5555:5555 droid-kit:13
 ```
 
-注意：挂载空卷时，模块与 Xposed 应用在首启的 `post-fs-data` / `boot-complete` 阶段自动安装，同一轮启动生效，**不需要再重启容器**。复用已有数据的卷则直接开机即用。
+注意：挂载空卷时，模块与 Xposed 应用在首启的 `post-fs-data` / `late-start` / `boot-complete` 阶段自动安装，LSPosed 默认配置同时写入，**不需要再重启容器**。复用已有数据的卷则直接开机即用。
 
 ## 首次启动
 
@@ -127,9 +128,10 @@ docker run -itd --privileged --name droid-kit \
 1. Magisk 环境自举（优先使用 `/cache/data_adb/magisk`；该目录缺失时由 `/system/etc/init/magisk` 下的 busybox / util_functions.sh 补齐）
 2. Zygisk 自动开启（仅首次；之后可在管理器里自行关闭）
 3. Magisk 模块经完整安装流水线装入（含各模块自带的 customize.sh，按架构放置二进制），并交给同一轮启动的 `magisk --post-fs-data` 立即合并
-4. Xposed 应用（GPS Setter / FakeSensor）、LSPosed / HMA 管理器与 Magisk 管理器自动安装
+4. Xposed 应用（GPS Setter / FakeSensor / Waydroid Network Spoof）安装，并写入 LSPosed 默认启用与作用域
+5. LSPosed / HMA 管理器与 Magisk 管理器自动安装
 
-模块和 Xposed 应用都在首启内完成，**不需要 `docker restart`**。
+模块和 Xposed 应用都在首启内完成，**不需要 `docker restart`**。LSPosed 首次启动会让 system_server 软重启一次；`boot-complete` 只执行一次。
 
 验证：
 
@@ -139,7 +141,7 @@ adb -s localhost:5555 shell ps -A | grep -E "lspd|zygiskd"  # lspd = LSPosed 已
 adb -s localhost:5555 shell pm list packages -3              # 应看到 magisk / gpssetter / fakesensor / hma_oss / lsposed manager
 ```
 
-GPS Setter / FakeSensor 还需在 LSPosed 管理器里启用模块并勾选作用域。
+GPS Setter / FakeSensor / Waydroid Network Spoof 默认已在 LSPosed 中启用并写入作用域；Waydroid Network Spoof 首次生效需重启目标应用。新安装的应用会在下次容器启动时自动加入作用域，也可在 LSPosed 管理器里手动勾选。
 
 ## 使用
 

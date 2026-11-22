@@ -5,7 +5,7 @@
 ## 设计目标
 
 - 镜像只包含系统资产（Magisk 二进制、模块 zip、Xposed APK、ReCam）
-- 首次启动自动完成全部安装，**不需要重启容器**
+- 首次启动自动完成全部安装、默认启用并写入作用域，**不需要重启容器**（LSPosed 启动后 system_server 会软重启一次）
 - Zygisk 保留 reDroid 的 native bridge（ARM 转译）能力
 - 不依赖宿主机 `/data` 支持 POSIX ACL
 
@@ -25,16 +25,21 @@ init
       ├─ upgrade_modules：modules_update → modules
       ├─ 执行模块 post-fs-data.sh
       ├─ 配置 Zygisk 与 native bridge 别名
-      └─ zygote 启动（Zygisk 注入）
-└─ boot-complete
-   └─ /system/bin/droid-kit-setup boot-complete
-      ├─ 安装 GPS Setter / FakeSensor
-      ├─ 安装 LSPosed / HMA 管理器
-      ├─ 补装 Magisk 管理器
-      └─ 写入 boot.log: boot-complete done
+      └─ zygote / system_server 启动（Zygisk 注入）
+└─ late-start
+   ├─ /system/bin/droid-kit-setup late-start
+   │  ├─ 等 sys.boot_completed=1
+   │  ├─ 安装 GPS Setter / FakeSensor / Waydroid Network Spoof
+   │  └─ 写入 LSPosed 默认启用与作用域（静态 sqlrun）
+   └─ /sbin/magisk --service
+      └─ LSPosed service.sh → lspd（读取上面的配置）
+└─ boot-complete（每轮启动只执行一次）
+   ├─ 安装 LSPosed / HMA 管理器
+   ├─ 补装 Magisk 管理器
+   └─ 写入 boot.log: boot-complete done
 ```
 
-关键点：模块安装发生在 `/sbin/magisk --post-fs-data` **之前**。Magisk 会在同一轮启动中把 `modules_update` 合并进 `modules`，随后 zygote 才启动，因此 Zygisk 和模块在首次启动就生效。
+关键点：Magisk 模块安装发生在 `/sbin/magisk --post-fs-data` **之前**，在同一轮启动中完成合并并由 Zygisk 加载。Xposed 应用在 `late-start` 安装，LSPosed 配置在 `lspd` 启动前写入，因此首次启动就处于默认启用/作用域状态。
 
 ## 为什么不需要重启
 
@@ -45,7 +50,9 @@ init
 - 紧随其后的 `magisk --post-fs-data` 完成合并
 - zygote 在合并之后启动，Zygisk 直接加载模块
 
-Xposed APK 在 `boot-complete` 安装，属于普通应用安装，不需要重启容器。
+Xposed APK 在 `late-start` 安装；LSPosed 的默认启用与作用域写入 `modules_config.db` 后，`service.sh` 才启动 `lspd`，因此不存在“装完还要手动开模块”的步骤。
+
+LSPosed 启动时会对已运行的 system_server 做一次注入，导致 system_server 软重启一次；`boot-complete` 用每轮标记避免重复执行。容器本身只启动一次。
 
 ## Native bridge 与 Zygisk
 
@@ -145,25 +152,26 @@ docker run -itd --rm --privileged \
 - 启动方式：不挂数据卷
 - 宿主机 Docker 后端：ZFS（未开启 POSIX ACL）
 
-首启约 140 秒到达 `boot-complete done`；随后执行一次 `docker restart`，第二次约 100 秒到达 `boot-complete done`。两次均未出现 Zygisk 回滚。
+首启约 160 秒到达 `boot-complete done`；随后执行一次 `docker restart`，第二次约 120 秒到达。每轮 `boot-complete` 只执行一次（system_server 软重启后的重复触发被标记跳过），未出现 Zygisk 回滚。
 
 ### 启动日志
 
 ```text
-11-22 05:45:41 === droid-kit-setup boot-complete (pid 3674) ===
-11-22 05:46:01 xposed install: FakeSensor.apk
-11-22 05:46:03 xposed installed: FakeSensor.apk
-11-22 05:46:04 xposed install: GPS-Setter.apk
-11-22 05:46:10 xposed installed: GPS-Setter.apk
-11-22 05:46:10 manager install: /data/adb/modules/zygisk_lsposed/manager.apk
-11-22 05:46:14 manager installed: /data/adb/modules/zygisk_lsposed/manager.apk
-11-22 05:46:14 manager install: /data/adb/modules/hma_oss_zygisk/manager.apk
-11-22 05:46:20 manager installed: /data/adb/modules/hma_oss_zygisk/manager.apk
-11-22 05:46:49 manager reinstalled
-11-22 05:46:49 === boot-complete done ===
+11-22 07:01:32 === droid-kit-setup late-start (pid 1464) ===
+11-22 07:02:32 xposed installed: FakeSensor.apk
+11-22 07:02:39 xposed installed: GPS-Setter.apk
+11-22 07:02:41 xposed installed: WaydroidNetworkSpoof.apk
+11-22 07:02:44 lsposed configured (late-start)
+11-22 07:03:08 manager install: /data/adb/modules/zygisk_lsposed/manager.apk
+11-22 07:03:12 manager installed: /data/adb/modules/zygisk_lsposed/manager.apk
+11-22 07:03:12 manager install: /data/adb/modules/hma_oss_zygisk/manager.apk
+11-22 07:03:15 manager installed: /data/adb/modules/hma_oss_zygisk/manager.apk
+11-22 07:03:45 manager reinstalled
+11-22 07:03:45 === boot-complete done ===
+11-22 07:04:42 === boot-complete already done (system_server restart) ===
 ```
 
-`grep -c 'boot-complete done'` 首启后为 `1`，`docker restart` 后为 `2`；每轮只增加一次，没有重启循环。
+`grep -c 'boot-complete done'` 首启后为 `1`，第二次容器启动后为 `2`；每轮只增加一次，没有 boot-complete 循环。
 
 ### 模块
 
@@ -177,10 +185,10 @@ zygisk_shamiko: 7 files
 ### 进程
 
 ```text
-root    85  1 ... magiskd
-system 1290 1 ... lspd
-system 1587 1440 ... system_server
-root   1595 1 ... zygiskd64
+root      85    1 ... magiskd
+system  1701    1 ... lspd
+system  2521 2392 ... system_server
+root    2528    1 ... zygiskd64
 ```
 
 ### 应用
@@ -190,6 +198,7 @@ package:com.app.fakesensor
 package:com.android1500.gpssetter
 package:com.topjohnwu.magisk
 package:org.frknkrc44.hma_oss
+package:com.waydroid.networkspoof
 package:org.lsposed.manager
 ```
 
@@ -202,16 +211,32 @@ key=bootloop|value=0
 tmpfs /data/media tmpfs rw,relatime,size=2097152k,mode=771,inode64 0 0
 ```
 
+LSPosed 默认配置（每个模块 84 个作用域）：
+
+```text
+com.android1500.gpssetter | enabled=1
+com.app.fakesensor         | enabled=1
+com.waydroid.networkspoof  | enabled=1
+scope 排除 android / system
+```
+
+`com.android.settings` 新进程日志：
+
+```text
+LSPosed-Bridge: NetworkSpoofer: Loaded for com.android.settings — wifi=true cellular=true
+```
+
 ### 错误计数
 
 ```text
 Failed to set default ACL: 0
 Zygote JNI buffer capacity 错误: 0
 magiskpolicy 崩溃: 0
+system_server 崩溃: 0
 com.android.phone FATAL: 0
 ```
 
-- `com.android.phone` / `system_server` 无崩溃
+- `com.android.phone` 无崩溃；system_server 仅因 LSPosed 注入软重启一次
 - `/data/user_de/0/com.android.providers.telephony/databases` 正常存在
 
 ### 已知噪声
@@ -220,6 +245,7 @@ com.android.phone FATAL: 0
 
 - `android.hardware.bluetooth@1.1-service.sim` / `com.android.bluetooth` 反复崩溃
 - 偶发单个 `com.android.statementservice` FATAL
+- LSPosed 在 `late-start` 启动后，system_server 会软重启一次；`boot-complete` 通过每轮标记跳过重复执行
 
 ## 兼容/兜底代码审计
 
@@ -252,14 +278,39 @@ com.android.phone FATAL: 0
 | `bootanim.rc.gz` | Magisk 管理器自更新时还原触发配置 |
 | `build.sh` 的 `curl --http1.1 --retry` | 宿主机下载 Magisk 的网络健壮性 |
 | `PLATFORM` / `TARGETARCH` | amd64 / arm64 多架构支持 |
+| `docker/sqlrun` + LSPosed DB 写入 | Android 自带 `sqlite3` 因 ICU 数据 abort；静态工具用于默认启用/作用域 |
+| LSPosed `post-fs-data.sh` 去除 daemon 启动 | 让 lspd 在 late-start 写入配置后启动，否则启动缓存会读到空配置 |
+| `boot-complete-done` 每轮标记 | system_server 软重启会再次触发 boot-complete，标记避免重复安装管理器 |
 
 ### 已升级
 
 - Magisk v30.7 → v31.1：修复 Zygisk lazy native bridge 二次 hook 导致的 JNI 注册损坏
 
+## 可加入的真机化模块（建议）
+
+当前已覆盖：机型指纹（PIF）、Root 隐藏（Shamiko）、应用列表隐藏（HMA）、WiFi（Waydroid Network Spoof）、GPS、传感器、摄像头（ReCam）。
+
+还可考虑：
+
+| 方向 | 候选 | 说明/风险 |
+| --- | --- | --- |
+| 设备 ID | Android Faker / Device ID Masker（LSPosed） | Android ID、IMEI、序列号、MAC；需先验证 Android 13 兼容性，可能和 PIF/HMA 冲突 |
+| SIM/运营商 | Fake SIM / SIM Operator（LSPosed） | 运营商、MCC/MNC；需验证 Android 13 |
+| Play Integrity | 新版 PIF / Tricky Store（Magisk） | amd64 上 PIF 仅 ARM 库；Tricky Store 需要 keybox，风险高，不建议默认加入 |
+| Root 隐藏 | Zygisk Assistant（Magisk） | 与 Shamiko 功能重叠，可能冲突；默认不加 |
+| 系统属性 | Sensitive Props / device props | PIF 已覆盖大部分指纹；额外模块可能干扰 OTA/系统属性 |
+| 电量/充电 | Battery Spoofer（Xposed） | 影响面较小，优先级低 |
+| 电池/温度 | 各类 Sensor Spoof | FakeSensor 已覆盖部分传感器 |
+| 网络 | Waydroid Network Spoof | 已加入并默认启用 |
+| 相机 | ReCam | 已内置二进制，需按 README 注入 |
+
+建议优先级：**设备 ID > SIM/运营商 > Play Integrity（arm64/新版 PIF）**。涉及 keybox、IMEI 的模块有封号和合规风险，默认不打包。
+
 ## 已知限制
 
 - **PlayIntegrityFork 官方 zip 仅含 ARM 库**：`linux/amd64` 镜像上其 Zygisk 组件无法加载，需要 `PLATFORM=linux/arm64`
 - `/data/media` 使用 tmpfs，sdcard 数据不持久
-- GPS Setter / FakeSensor 安装后仍需在 LSPosed 管理器里启用模块并勾选作用域
-- 首次启动需要约 2-3 分钟完成模块和 Xposed 安装
+- GPS Setter / FakeSensor / Waydroid Network Spoof 默认已启用并写入作用域；作用域排除 `android` / `system`
+- 新安装的应用在下次容器启动时自动加入作用域；不重启时可在 LSPosed 管理器手动勾选
+- LSPosed 首次启动会让 system_server 软重启一次；`boot-complete` 只执行一次，容器本身只启动一次
+- 首次启动约 3 分钟完成模块、Xposed 和 LSPosed 配置
