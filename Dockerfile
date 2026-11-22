@@ -13,8 +13,7 @@ FROM ${REDROID_IMAGE} AS redroid
 FROM debian:bookworm-slim AS prep
 
 ARG TARGETARCH
-ARG MAGISK_APK_URL=https://github.com/ayasa520/Magisk/releases/download/v30.7/Magisk-v30.7.apk
-ARG MAGISK_APK_MD5=0a31050fdcfaa15f47c9dd1eb8d04fc8
+ARG MAGISK_APK_MD5=10304bbeddb6e1bbc7040fc7ec133178
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates libarchive-tools gzip \
@@ -22,12 +21,9 @@ RUN apt-get update \
 
 WORKDIR /build
 
-# 下载 Magisk（Delta 系分支）并校验
-# curl 参数：强制 HTTP/1.1 规避 HTTP/2 PROTOCOL_ERROR；限速超时防挂死；失败自动重试
-RUN curl -fsSL --http1.1 --retry 8 --retry-all-errors --retry-delay 2 \
-      --connect-timeout 20 --speed-limit 1024 --speed-time 30 \
-      -o magisk.apk "${MAGISK_APK_URL}" \
- && echo "${MAGISK_APK_MD5}  magisk.apk" | md5sum -c - \
+# Magisk APK 由 build.sh 下载并校验后放入构建上下文，这里再校验一次
+COPY docker/Magisk-v31.1.apk magisk.apk
+RUN echo "${MAGISK_APK_MD5}  magisk.apk" | md5sum -c - \
  && mkdir unpack && bsdtar -xf magisk.apk -C unpack
 
 # 从 APK 提取当前架构的 Magisk 二进制（lib*.so → 去掉前缀后缀）

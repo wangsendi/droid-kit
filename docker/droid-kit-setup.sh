@@ -48,7 +48,7 @@ post-fs-data)
         log "magisk env bootstrapped"
     fi
 
-    # 确保 magiskd 已就绪（--setup-sbin 通常已经拉起，这里兜底）
+    # magiskd 由 --setup-sbin 启动；sqlite 与模块安装都依赖它
     /sbin/magisk --daemon >/dev/null 2>&1
 
     # 预开启 Zygisk（仅首启）

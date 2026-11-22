@@ -2,5 +2,8 @@
 modules/
 recam/
 
+# 构建期下载的 Magisk APK
+docker/Magisk-*.apk
+
 # 运行时数据卷
 data/

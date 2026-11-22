@@ -2,7 +2,7 @@
 
 反检测 Android 容器模板（Android 13，基于 reDroid）。
 
-镜像内置 Magisk（Delta 系 v30.7，含 Zygisk 支持）与全部反检测模块资产，首次启动自动完成安装并加载（无需重启容器）。Magisk 集成方案来自社区已验证实现 [ayasa520/redroid-script](https://github.com/ayasa520/redroid-script)。
+镜像内置 Magisk（Delta 系 v31.1，含 Zygisk 支持）与全部反检测模块资产，首次启动自动完成安装并加载（无需重启容器）。Magisk 集成方案来自社区已验证实现 [ayasa520/redroid-script](https://github.com/ayasa520/redroid-script)。
 
 启动流程与实测记录见 [docs/BOOT.md](docs/BOOT.md)。
 
@@ -85,9 +85,10 @@ PLATFORM=linux/arm64 ./build.sh   # arm64（recam/ 需换成 arm64 版）
 
 构建只产出系统资产镜像：
 
-1. 下载 Magisk v30.7（MD5 校验）→ 按架构提取二进制
-2. 模块 zip 与 Xposed APK 原样打入镜像
-3. 首启在运行中的 Android 内执行 `customize.sh` 和 `pm install`
+1. `build.sh` 下载 Magisk v31.1 到 `docker/Magisk-v31.1.apk`（已存在则复用并校验 MD5）
+2. 按架构提取 Magisk 二进制
+3. 模块 zip 与 Xposed APK 原样打入镜像
+4. 首启在运行中的 Android 内执行 `customize.sh` 和 `pm install`
 
 因此构建很快，不需要 binder；模块安装全部发生在容器首次启动时。
 

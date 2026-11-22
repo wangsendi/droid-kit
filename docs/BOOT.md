@@ -65,14 +65,35 @@ ro.dalvik.vm.native.bridge=libnb.so
 
 Magisk 会把属性改写为 `libzygisk.so` + 原始库名，并在 worker 挂载中注入对应别名，由 Zygisk 的 hook 还原并加载原始 native bridge。
 
-本方案**不重置** native bridge 属性，首次启动后实测：
+本方案**不重置** native bridge 属性。Zygisk 运行后属性会被改写为：
 
 ```text
 getprop ro.dalvik.vm.native.bridge
-libnb.so
+libzygisk.solibnb.so
 ```
 
-且 `zygiskd64`、`lspd` 均正常运行。
+worker 中对应的加载器别名指向 Magisk，原始库保留并由 hook 加载：
+
+```text
+/sbin/.magisk/worker/system/lib64/libzygisk.solibnb.so  (bind mount, source /sbin/magisk)
+/sbin/.magisk/worker/system/lib64/libnb.so -> libndk_translation.so
+```
+
+`zygiskd64`、`lspd` 均正常运行。
+
+## Zygisk 稳定性（Magisk v31.1）
+
+旧版 Magisk v30.7 的 `zygisk/hook.cpp` 缺少 `jni_hooked` 保护。lazy native bridge 设备上，`post_native_bridge_load` 与 `strdup("ZygoteInit")` 两条路径都会触发 JNI hook，第二次会破坏 JNI 注册，表现为：
+
+```text
+JNI DETECTED ERROR ... buffer capacity greater than maximum jint
+in call to NewDirectByteBuffer
+from Zygote.nativeForkSystemServer
+```
+
+随后 zygote 连续崩溃，Magisk 回滚 Zygisk。该问题与模块无关，与 `/data` 也无关。
+
+Magisk v31.1 已包含 `jni_hooked` 保护。本镜像使用 v31.1，连续两次启动（首启 + 容器重启）实测 `JNI` 错误均为 `0`。
 
 ## `/data/media` 与 ACL
 
@@ -102,7 +123,7 @@ mount -t tmpfs -o size=2g,mode=0771 tmpfs /data/media
 PLATFORM=linux/arm64 ./build.sh   # arm64
 ```
 
-构建只执行 `docker buildx build`，不需要 binder、不需要 prime 容器。
+`build.sh` 先下载 Magisk v31.1 到 `docker/` 并校验 MD5，然后执行 `docker buildx build`；不需要 binder、不需要 prime 容器。
 
 运行：
 
@@ -124,25 +145,25 @@ docker run -itd --rm --privileged \
 - 启动方式：不挂数据卷
 - 宿主机 Docker 后端：ZFS（未开启 POSIX ACL）
 
-启动耗时约 130 秒到达 `boot-complete done`，之后未进行任何重启。
+首启约 140 秒到达 `boot-complete done`；随后执行一次 `docker restart`，第二次约 100 秒到达 `boot-complete done`。两次均未出现 Zygisk 回滚。
 
 ### 启动日志
 
 ```text
-11-22 04:08:26 === droid-kit-setup boot-complete (pid 3701) ===
-11-22 04:08:46 xposed install: FakeSensor.apk
-11-22 04:08:47 xposed installed: FakeSensor.apk
-11-22 04:08:47 xposed install: GPS-Setter.apk
-11-22 04:08:51 xposed installed: GPS-Setter.apk
-11-22 04:08:51 manager install: /data/adb/modules/zygisk_lsposed/manager.apk
-11-22 04:08:54 manager installed: /data/adb/modules/zygisk_lsposed/manager.apk
-11-22 04:08:54 manager install: /data/adb/modules/hma_oss_zygisk/manager.apk
-11-22 04:08:56 manager installed: /data/adb/modules/hma_oss_zygisk/manager.apk
-11-22 04:09:26 manager reinstalled
-11-22 04:09:26 === boot-complete done ===
+11-22 05:45:41 === droid-kit-setup boot-complete (pid 3674) ===
+11-22 05:46:01 xposed install: FakeSensor.apk
+11-22 05:46:03 xposed installed: FakeSensor.apk
+11-22 05:46:04 xposed install: GPS-Setter.apk
+11-22 05:46:10 xposed installed: GPS-Setter.apk
+11-22 05:46:10 manager install: /data/adb/modules/zygisk_lsposed/manager.apk
+11-22 05:46:14 manager installed: /data/adb/modules/zygisk_lsposed/manager.apk
+11-22 05:46:14 manager install: /data/adb/modules/hma_oss_zygisk/manager.apk
+11-22 05:46:20 manager installed: /data/adb/modules/hma_oss_zygisk/manager.apk
+11-22 05:46:49 manager reinstalled
+11-22 05:46:49 === boot-complete done ===
 ```
 
-`grep -c 'boot-complete done'` 结果为 `1`，30 秒后仍为 `1`（没有重启循环）。
+`grep -c 'boot-complete done'` 首启后为 `1`，`docker restart` 后为 `2`；每轮只增加一次，没有重启循环。
 
 ### 模块
 
@@ -156,10 +177,10 @@ zygisk_shamiko: 7 files
 ### 进程
 
 ```text
-root   110  1 ... magiskd
-system 1310 1 ... lspd
-system 1608 1445 ... system_server
-root   1615 1 ... zygiskd64
+root    85  1 ... magiskd
+system 1290 1 ... lspd
+system 1587 1440 ... system_server
+root   1595 1 ... zygiskd64
 ```
 
 ### 应用
@@ -175,7 +196,7 @@ package:org.lsposed.manager
 ### 关键属性与挂载
 
 ```text
-ro.dalvik.vm.native.bridge = libnb.so
+ro.dalvik.vm.native.bridge = libzygisk.solibnb.so
 key=zygisk|value=1
 key=bootloop|value=0
 tmpfs /data/media tmpfs rw,relatime,size=2097152k,mode=771,inode64 0 0
@@ -186,7 +207,8 @@ tmpfs /data/media tmpfs rw,relatime,size=2097152k,mode=771,inode64 0 0
 ```text
 Failed to set default ACL: 0
 Zygote JNI buffer capacity 错误: 0
-/system/bin/sh: ...（无）
+magiskpolicy 崩溃: 0
+com.android.phone FATAL: 0
 ```
 
 - `com.android.phone` / `system_server` 无崩溃
@@ -196,9 +218,44 @@ Zygote JNI buffer capacity 错误: 0
 
 以下日志不影响启动和使用，属于 reDroid 基础镜像或硬件模拟服务：
 
-- `magiskpolicy` 启动时 `FORTIFY: fread: null FILE*`（SIGABRT）
 - `android.hardware.bluetooth@1.1-service.sim` / `com.android.bluetooth` 反复崩溃
 - 偶发单个 `com.android.statementservice` FATAL
+
+## 兼容/兜底代码审计
+
+### 已移除
+
+- **构建期 prime/commit**：不再启动临时 Android 并把 `/data` 固化进镜像
+- **prepare-modules.sh 的宽松匹配**：
+  - 子目录内查找 `module.prop` / `AndroidManifest.xml`
+  - 大写 `.APK` / `.ZIP` 扩展名
+  - 把带 `AndroidManifest.xml` 的 zip 当作 Xposed 模块
+- **运行时不再重置 native bridge 属性**：保留 `libnb.so` 与 ARM 转译链路
+- **bootanim.rc 冗余触发**：
+  - 三个重复的 `magiskpolicy --live --magisk` 上下文（SELinux 为 Disabled，且均会 FORTIFY 崩溃）
+  - `vold.decrypt=trigger_restart_framework` 分支（reDroid 为 unencrypted，实际只触发 `nonencrypted`）
+  - `init.svc.zygote=stopped` 分支（实际只触发 `init.svc.zygote=restarting`）
+
+### 保留（必要依赖，不是兼容分支）
+
+| 代码 | 原因 |
+| --- | --- |
+| `mount --bind /data /data` | Magisk 的 `check_data` 要求 `/data` 出现在挂载表 |
+| `mount tmpfs /data/media` | vold 设置 default ACL 所需 |
+| `/data/adb/magisk` 自举 | 模块安装早于 Magisk 的 `post-fs-data` |
+| `BOOTMODE=true` / `ZYGISK_ENABLED=1` / `PATH` | 模块安装脚本的语义与命令查找 |
+| `.droid-kit` marker | 首启安装幂等，避免重复执行 |
+| `sleep 20` / `sleep 25` | 等系统服务就绪、等 Magisk 管理器签名卸载后补装 |
+| `pm install -r` | 幂等安装 |
+| `/cache/data_adb` + `/system` 两份 util_functions.sh | 前者供 Magisk 自身环境导入，后者供更早的模块安装阶段使用 |
+| `bootanim.rc` 的 `nonencrypted` + `zygote=restarting` 触发器 | redroid 实际触发的 Magisk 服务与 Zygisk 重启入口 |
+| `bootanim.rc.gz` | Magisk 管理器自更新时还原触发配置 |
+| `build.sh` 的 `curl --http1.1 --retry` | 宿主机下载 Magisk 的网络健壮性 |
+| `PLATFORM` / `TARGETARCH` | amd64 / arm64 多架构支持 |
+
+### 已升级
+
+- Magisk v30.7 → v31.1：修复 Zygisk lazy native bridge 二次 hook 导致的 JNI 注册损坏
 
 ## 已知限制
 
