@@ -78,7 +78,7 @@ if [[ "$BUILD_IN_DOCKER" == "1" ]]; then
     echo "Building AOSP 12 builder image (one-time, several minutes)..."
     docker build -t "$BUILDER_IMAGE" -f "$repo_dir/Dockerfile.builder" "$repo_dir"
   fi
-  docker run --rm \
+  docker run --rm --privileged \
     -v "$HOST_AOSP_DIR:/aosp" \
     -v "$HOST_CAMERA_DIR:/repo" \
     -e LUNCH_TARGET="$LUNCH_TARGET" \

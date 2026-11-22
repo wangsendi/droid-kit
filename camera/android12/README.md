@@ -59,7 +59,7 @@ container script. The two `-v` sources must be paths the Docker daemon can see
 `/app/data/...`):
 
 ```bash
-docker run -d --name droid-kit-aosp-build \
+docker run -d --privileged --name droid-kit-aosp-build \
   -v /data/project/droid-kit/aosp12:/aosp \
   -v /data/project/droid-kit/workspace/droid-kit/camera/android12:/camera \
   ubuntu:20.04 bash /camera/container-build.sh
