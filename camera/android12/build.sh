@@ -10,7 +10,6 @@ repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 AOSP_DIR=${AOSP_DIR:-/app/data/aosp12}
 JOBS=${JOBS:-16}
 BUILD_IN_DOCKER=${BUILD_IN_DOCKER:-1}
-BUILDER_IMAGE=${BUILDER_IMAGE:-droid-kit-aosp12-builder}
 LUNCH_TARGET=${LUNCH_TARGET:-aosp_x86_64-eng}
 HOST_AOSP_DIR=${HOST_AOSP_DIR:-$AOSP_DIR}
 HOST_CAMERA_DIR=${HOST_CAMERA_DIR:-$repo_dir}
@@ -61,30 +60,16 @@ for p in "$repo_dir"/patches/*.patch; do
 done
 
 # --- build -------------------------------------------------------------------
-build_cmd=$(cat <<'EOS'
-set -euo pipefail
-cd /aosp
-set +u
-source build/envsetup.sh
-lunch "$LUNCH_TARGET"
-export USE_CAMERA_V4L2_HAL=true
-m -j"$JOBS" camera.v4l2 android.hardware.camera.provider@2.4-service_64 android.hardware.camera.provider@2.4-impl
-EOS
-)
-
 if [[ "$BUILD_IN_DOCKER" == "1" ]]; then
   command -v docker >/dev/null || die "docker is required for BUILD_IN_DOCKER=1"
-  if ! docker image inspect "$BUILDER_IMAGE" >/dev/null 2>&1; then
-    echo "Building AOSP 12 builder image (one-time, several minutes)..."
-    docker build -t "$BUILDER_IMAGE" -f "$repo_dir/Dockerfile.builder" "$repo_dir"
-  fi
+  # The detached/foreground builder must be privileged: unprivileged dpkg can
+  # deadlock while upgrading libc6 on this Docker/overlayfs host.
   docker run --rm --privileged \
     -v "$HOST_AOSP_DIR:/aosp" \
-    -v "$HOST_CAMERA_DIR:/repo" \
+    -v "$HOST_CAMERA_DIR:/camera" \
     -e LUNCH_TARGET="$LUNCH_TARGET" \
     -e JOBS="$JOBS" \
-    -w /aosp \
-    "$BUILDER_IMAGE" bash -lc "$build_cmd"
+    ubuntu:20.04 bash /camera/container-build.sh
 else
   cd "$AOSP_DIR"
   set +u

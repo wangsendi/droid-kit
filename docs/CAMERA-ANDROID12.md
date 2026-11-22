@@ -51,12 +51,15 @@ cd camera/android12
 > 在当前 Docker/overlayfs 环境里，非 privileged 容器解包 `libc6` 可能卡死。
 > 长构建请用下面的 detached + `--privileged` 容器；普通 Linux 主机不受影响。
 
-如果宿主机不适合直接编译 AOSP 12：
+如果宿主机不适合直接编译 AOSP 12，用 privileged Ubuntu 20.04 容器：
 
 ```bash
-docker build -t droid-kit-aosp12-builder -f Dockerfile.builder .
 BUILD_IN_DOCKER=1 ./build.sh
 ```
+
+> 非 privileged 容器在当前 Docker/overlayfs 上解包 `libc6` 可能死锁；
+> `build.sh` 已使用 `--privileged`。Docker daemon 看不到 `/app/data` 时，
+> 设置 `HOST_AOSP_DIR` / `HOST_CAMERA_DIR`（见 `camera/android12/README.md`）。
 
 产物：
 

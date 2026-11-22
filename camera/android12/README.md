@@ -37,10 +37,10 @@ This downloads tens of GB.
 ./build.sh
 ```
 
-If the host is not suitable for AOSP 12 builds:
+If the host is not suitable for AOSP 12 builds, use the privileged Ubuntu 20.04
+container path (the same one used by the detached builder):
 
 ```bash
-docker build -t droid-kit-aosp12-builder -f Dockerfile.builder .
 BUILD_IN_DOCKER=1 ./build.sh
 ```
 

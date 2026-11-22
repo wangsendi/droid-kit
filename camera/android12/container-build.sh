@@ -8,6 +8,7 @@ export LC_ALL=C
 export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
 
 log=/camera/container-build.log
+LUNCH_TARGET=${LUNCH_TARGET:-aosp_x86_64-eng}
 exec >> "$log" 2>&1
 echo "=== droid-kit AOSP12 camera build $(date -u +%FT%TZ) ==="
 
@@ -79,7 +80,7 @@ cd /aosp
 echo "=== lunch ==="
 set +u
 source build/envsetup.sh
-lunch aosp_x86_64-eng
+lunch "$LUNCH_TARGET"
 
 export USE_CAMERA_V4L2_HAL=true
 echo "=== build ==="
