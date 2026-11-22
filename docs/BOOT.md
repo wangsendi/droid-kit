@@ -323,6 +323,7 @@ com.android.phone FATAL: 0
 
 - **PlayIntegrityFix v4.9 已带 x86_64 库**：amd64 可加载；但 A13+ DEVICE 需要硬件 keybox，reDroid 无 TEE，默认只能到 BASIC
 - `/data/media` 使用 tmpfs，sdcard 数据不持久
+- 测试镜像默认关闭 adb 认证（`ro.adb.secure=0`），正式环境应恢复认证或写入自己的 adb key
 - 10 个 Xposed 模块默认启用并写入作用域；作用域排除 `android` / `system` / GMS / Play Store / SystemUI
 - 新安装的应用在下次容器启动时自动加入作用域；不重启时可在 LSPosed 管理器手动勾选
 - LSPosed 首次启动会让 system_server 软重启一次；`boot-complete` 只执行一次，容器本身只启动一次

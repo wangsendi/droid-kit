@@ -126,6 +126,8 @@ docker run -itd --rm --privileged \
   androidboot.redroid_dpi=480
 ```
 
+> 测试镜像默认关闭 adb 认证（`ro.adb.secure=0`），宿主机可直接 `adb connect`；生产使用请自行恢复认证或写入自己的 `adb_keys`。
+>
 > vold 启动时要求 `/data/media` 支持 POSIX ACL。脚本会在 `post-fs-data` 阶段自动给它挂一个 tmpfs，避免 Docker overlayfs（尤其是底层 ZFS 未开启 `acltype=posixacl` 时）导致用户数据目录创建失败、系统重启循环。代价是内部存储（sdcard）不持久；需要持久化时可改为 bind mount 一个 ext4/xfs 目录。
 
 镜像只包含系统资产；首次启动会自动安装模块与 Xposed 应用，并在 LSPosed 中默认启用/作用域，**无需重启容器**（LSPosed 启动后 system_server 会软重启一次）。

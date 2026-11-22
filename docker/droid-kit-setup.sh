@@ -184,6 +184,11 @@ post-fs-data)
     # magiskd 由 --setup-sbin 启动；sqlite 与模块安装都依赖它
     /sbin/magisk --daemon >/dev/null 2>&1
 
+    # 测试容器默认关闭 adb 认证，便于宿主机/开发容器直接 adb/scrcpy
+    /sbin/resetprop ro.adb.secure 0 >/dev/null 2>&1
+    setprop ctl.restart adbd >/dev/null 2>&1
+    log "adb auth disabled"
+
     # 预开启 Zygisk（仅首启）
     if [ ! -e "${MARKERS}/zygisk-on" ]; then
         /sbin/magisk --sqlite "REPLACE INTO settings (key,value) VALUES('zygisk',1)" >/dev/null 2>&1 \

@@ -7,3 +7,6 @@ docker/Magisk-*.apk
 
 # 运行时数据卷
 data/
+
+# 测试截图
+/screen*.png
