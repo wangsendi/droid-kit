@@ -1,2 +1,8 @@
 **
 !Dockerfile
+!docker/
+!docker/**
+!modules/
+!modules/**
+!recam/
+!recam/**
