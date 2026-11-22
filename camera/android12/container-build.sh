@@ -8,12 +8,15 @@ export LC_ALL=C
 export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
 
 log=/camera/container-build.log
-exec > >(tee -a "$log") 2>&1
+exec >> "$log" 2>&1
 echo "=== droid-kit AOSP12 camera build $(date -u +%FT%TZ) ==="
 
 sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirrors.ustc.edu.cn/ubuntu|g; s|http://security.ubuntu.com/ubuntu|http://mirrors.ustc.edu.cn/ubuntu|g' /etc/apt/sources.list
 
 apt-get -o Dpkg::Use-Pty=0 update
+# Upgrade libc6 alone first; doing it inside the large transaction deadlocks
+# dpkg-deb on this overlayfs setup.
+apt-get -o Dpkg::Use-Pty=0 install -y --no-install-recommends libc6
 apt-get -o Dpkg::Use-Pty=0 install -y --no-install-recommends \
   openjdk-11-jdk \
   python3 python3-pip python-is-python3 \
@@ -33,8 +36,13 @@ git config --global url."https://android.googlesource.com/".insteadOf "https://m
 
 cd /aosp
 echo "=== repo sync ==="
-./repo sync -c -j8 --no-tags --no-clone-bundle --optimized-fetch || \
-  echo "repo sync reported errors; checking required projects"
+for attempt in 1 2 3; do
+  if ./repo sync -c -j8 --no-tags --no-clone-bundle --optimized-fetch; then
+    break
+  fi
+  echo "repo sync attempt $attempt failed; retrying in 10s"
+  sleep 10
+done || echo "repo sync reported errors; checking required projects"
 
 [[ -f build/envsetup.sh ]] || { echo "FATAL: build/envsetup.sh missing after sync"; exit 1; }
 [[ -d hardware/libhardware/modules/camera/3_4 ]] || {
