@@ -1,0 +1,22 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <boolean name="featureTelephony" value="true" />
+    <boolean name="featureTelephonyGsm" value="true" />
+    <boolean name="featureTelephonyCdma" value="false" />
+    <boolean name="esimSupported" value="false" />
+    <int name="phoneType" value="1" />
+    <int name="phoneCount" value="1" />
+    <boolean name="voiceCapable" value="true" />
+    <boolean name="smsCapable" value="true" />
+    <int name="networkType" value="13" />
+    <int name="dataNetworkType" value="13" />
+    <string name="networkOperator">310260</string>
+    <string name="networkOperatorName">T-Mobile</string>
+    <string name="networkCountryIso">us</string>
+    <boolean name="networkRoaming" value="false" />
+    <int name="simState" value="5" />
+    <boolean name="hasIccCard" value="true" />
+    <string name="simOperator">310260</string>
+    <string name="simOperatorName">T-Mobile</string>
+    <string name="simCountryIso">us</string>
+</map>

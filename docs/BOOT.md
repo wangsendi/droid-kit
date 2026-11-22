@@ -29,7 +29,7 @@ init
 └─ late-start
    ├─ /system/bin/droid-kit-setup late-start
    │  ├─ 等 sys.boot_completed=1
-   │  ├─ 安装 GPS Setter / FakeSensor / Waydroid Network Spoof
+   │  ├─ 安装全部 10 个 Xposed 模块
    │  └─ 写入 LSPosed 默认启用与作用域（静态 sqlrun）
    └─ /sbin/magisk --service
       └─ LSPosed service.sh → lspd（读取上面的配置）
@@ -152,78 +152,95 @@ docker run -itd --rm --privileged \
 - 启动方式：不挂数据卷
 - 宿主机 Docker 后端：ZFS（未开启 POSIX ACL）
 
-首启约 160 秒到达 `boot-complete done`；随后执行一次 `docker restart`，第二次约 120 秒到达。每轮 `boot-complete` 只执行一次（system_server 软重启后的重复触发被标记跳过），未出现 Zygisk 回滚。
+首启约 200 秒到达 `boot-complete done`；随后执行一次 `docker restart`，第二次约 120 秒到达。每轮 `boot-complete` 只执行一次（system_server 软重启后的重复触发被标记跳过），未出现 Zygisk 回滚。
 
-### 启动日志
+### 启动日志（首启摘要）
 
 ```text
-11-22 07:01:32 === droid-kit-setup late-start (pid 1464) ===
-11-22 07:02:32 xposed installed: FakeSensor.apk
-11-22 07:02:39 xposed installed: GPS-Setter.apk
-11-22 07:02:41 xposed installed: WaydroidNetworkSpoof.apk
-11-22 07:02:44 lsposed configured (late-start)
-11-22 07:03:08 manager install: /data/adb/modules/zygisk_lsposed/manager.apk
-11-22 07:03:12 manager installed: /data/adb/modules/zygisk_lsposed/manager.apk
-11-22 07:03:12 manager install: /data/adb/modules/hma_oss_zygisk/manager.apk
-11-22 07:03:15 manager installed: /data/adb/modules/hma_oss_zygisk/manager.apk
-11-22 07:03:45 manager reinstalled
-11-22 07:03:45 === boot-complete done ===
-11-22 07:04:42 === boot-complete already done (system_server restart) ===
+11-22 08:22:35 lsposed configured: 10 module(s)
+11-22 08:22:37 === droid-kit-setup boot-complete (pid 5926) ===
+11-22 08:23:06 manager installed: /data/adb/modules/hma_oss_zygisk/manager.apk
+11-22 08:23:32 battery spoof applied
+11-22 08:23:32 === boot-complete done ===
+11-22 08:24:15 === droid-kit-setup boot-complete (pid 7237) ===
+11-22 08:24:52 manager reinstalled (post-restart)
+11-22 08:24:53 battery spoof applied
+11-22 08:24:53 === boot-complete already done (system_server restart) ===
 ```
 
-`grep -c 'boot-complete done'` 首启后为 `1`，第二次容器启动后为 `2`；每轮只增加一次，没有 boot-complete 循环。
+第二次容器启动后 `grep -c 'boot-complete done'` = `2`；每轮只增加一次，没有 boot-complete 循环。
 
 ### 模块
 
+Magisk：
+
 ```text
-hma_oss_zygisk: 9 files
-playintegrityfix: 12 files
-zygisk_lsposed: 10 files
-zygisk_shamiko: 7 files
+hma_oss_zygisk
+playintegrityfix
+xj_bluejay
+zygisk_lsposed
+zygisk_shamiko
+```
+
+Xposed：10 个模块全部写入 LSPosed DB，`enabled=1`，每个 83 个作用域：
+
+```text
+com.android1500.gpssetter
+com.app.fakesensor
+com.waydroid.networkspoof
+io.github.imkamaran.hidemydevice
+com.brianwalczak.telephonyspoofer
+com.android1500.androidfaker
+com.devicespooflab.hooks
+com.sal.privacykit
+com.sal.privacykit.lite
+com.spoofmydevice
 ```
 
 ### 进程
 
 ```text
-root      85    1 ... magiskd
-system  1701    1 ... lspd
-system  2521 2392 ... system_server
-root    2528    1 ... zygiskd64
+system  2157    1 ... lspd
+system  3049 2937 ... system_server
+root    3056    1 ... zygiskd64
 ```
 
 ### 应用
 
 ```text
-package:com.app.fakesensor
-package:com.android1500.gpssetter
-package:com.topjohnwu.magisk
-package:org.frknkrc44.hma_oss
-package:com.waydroid.networkspoof
-package:org.lsposed.manager
+com.app.fakesensor
+io.github.imkamaran.hidemydevice
+com.brianwalczak.telephonyspoofer
+com.devicespooflab.hooks
+com.android1500.androidfaker
+com.android1500.gpssetter
+com.sal.privacykit.lite
+com.topjohnwu.magisk
+com.spoofmydevice
+com.sal.privacykit
+org.frknkrc44.hma_oss
+com.waydroid.networkspoof
+org.lsposed.manager
 ```
 
-### 关键属性与挂载
+### 关键属性与预置值
 
 ```text
-ro.dalvik.vm.native.bridge = libzygisk.solibnb.so
-key=zygisk|value=1
-key=bootloop|value=0
-tmpfs /data/media tmpfs rw,relatime,size=2097152k,mode=771,inode64 0 0
+ro.product.brand      = google
+ro.product.model      = GB62Z
+ro.product.marketname = Pixel 6a
+battery level         = 87
+battery status        = 2 (charging)
+battery AC            = true
+battery temperature   = 305 (30.5°C)
 ```
 
-LSPosed 默认配置（每个模块 84 个作用域）：
+Hide My Device / TelephonySpoofer 的 SharedPreferences 同时写入：
 
 ```text
-com.android1500.gpssetter | enabled=1
-com.app.fakesensor         | enabled=1
-com.waydroid.networkspoof  | enabled=1
-scope 排除 android / system
-```
-
-`com.android.settings` 新进程日志：
-
-```text
-LSPosed-Bridge: NetworkSpoofer: Loaded for com.android.settings — wifi=true cellular=true
+/data/user/0/<pkg>/shared_prefs/*.xml
+/data/data/<pkg>/shared_prefs/*.xml
+/data/misc/<uuid>/prefs/<pkg>/*.xml
 ```
 
 ### 错误计数
@@ -231,21 +248,15 @@ LSPosed-Bridge: NetworkSpoofer: Loaded for com.android.settings — wifi=true ce
 ```text
 Failed to set default ACL: 0
 Zygote JNI buffer capacity 错误: 0
-magiskpolicy 崩溃: 0
 system_server 崩溃: 0
 com.android.phone FATAL: 0
 ```
 
-- `com.android.phone` 无崩溃；system_server 仅因 LSPosed 注入软重启一次
-- `/data/user_de/0/com.android.providers.telephony/databases` 正常存在
-
 ### 已知噪声
-
-以下日志不影响启动和使用，属于 reDroid 基础镜像或硬件模拟服务：
 
 - `android.hardware.bluetooth@1.1-service.sim` / `com.android.bluetooth` 反复崩溃
 - 偶发单个 `com.android.statementservice` FATAL
-- LSPosed 在 `late-start` 启动后，system_server 会软重启一次；`boot-complete` 通过每轮标记跳过重复执行
+- LSPosed 在 late-start 启动后 system_server 软重启一次；boot-complete 用每轮标记跳过重复执行
 
 ## 兼容/兜底代码审计
 
@@ -285,32 +296,35 @@ com.android.phone FATAL: 0
 ### 已升级
 
 - Magisk v30.7 → v31.1：修复 Zygisk lazy native bridge 二次 hook 导致的 JNI 注册损坏
+- PlayIntegrityFork v19（ARM-only）→ PlayIntegrityFix v4.9-inject-s（含 x86_64）
 
-## 可加入的真机化模块（建议）
+## 已加入的模块
 
-当前已覆盖：机型指纹（PIF）、Root 隐藏（Shamiko）、应用列表隐藏（HMA）、WiFi（Waydroid Network Spoof）、GPS、传感器、摄像头（ReCam）。
+| 方向 | 模块 |
+| --- | --- |
+| 设备标识 | Hide My Device、AndroidFaker |
+| SIM / 运营商 | TelephonySpoofer、Hide My Device |
+| 机型 / Build | Magisk-DeviceSpoofer Pixel 6a、PlayIntegrityFix v4.9、DeviceSpoofLab、SpoofMyDevice |
+| 隐私 / ID | PrivacyKit、PrivacyKitLite |
+| Root / 应用列表 | Shamiko、HMA-OSS |
+| WiFi / 网络 | Waydroid Network Spoof、TelephonySpoofer |
+| GPS / 传感器 | GPS Setter、FakeSensor |
+| 摄像头 | ReCam |
+| 电池 | `dumpsys battery set` 启动写入 |
 
-还可考虑：
+这些模块都和普通模块一样安装、在 LSPosed 中启用并写入作用域。各模块自身的配置需求：
 
-| 方向 | 候选 | 说明/风险 |
-| --- | --- | --- |
-| 设备 ID | Android Faker / Device ID Masker（LSPosed） | Android ID、IMEI、序列号、MAC；需先验证 Android 13 兼容性，可能和 PIF/HMA 冲突 |
-| SIM/运营商 | Fake SIM / SIM Operator（LSPosed） | 运营商、MCC/MNC；需验证 Android 13 |
-| Play Integrity | 新版 PIF / Tricky Store（Magisk） | amd64 上 PIF 仅 ARM 库；Tricky Store 需要 keybox，风险高，不建议默认加入 |
-| Root 隐藏 | Zygisk Assistant（Magisk） | 与 Shamiko 功能重叠，可能冲突；默认不加 |
-| 系统属性 | Sensitive Props / device props | PIF 已覆盖大部分指纹；额外模块可能干扰 OTA/系统属性 |
-| 电量/充电 | Battery Spoofer（Xposed） | 影响面较小，优先级低 |
-| 电池/温度 | 各类 Sensor Spoof | FakeSensor 已覆盖部分传感器 |
-| 网络 | Waydroid Network Spoof | 已加入并默认启用 |
-| 相机 | ReCam | 已内置二进制，需按 README 注入 |
-
-建议优先级：**设备 ID > SIM/运营商 > Play Integrity（arm64/新版 PIF）**。涉及 keybox、IMEI 的模块有封号和合规风险，默认不打包。
+- Hide My Device / TelephonySpoofer / Magisk-DeviceSpoofer：已预置默认值
+- SpoofMyDevice / DeviceSpoofLab / PrivacyKit：需要在其 app 内分配 profile 或开启对应开关
+- AndroidFaker：使用其默认/全局值
+- PrivacyKit / PrivacyKitLite 声明 API 102，LSPosed 1.9.2 可能拒绝注入；模块仍安装并启用（不做额外兼容/降级）
 
 ## 已知限制
 
-- **PlayIntegrityFork 官方 zip 仅含 ARM 库**：`linux/amd64` 镜像上其 Zygisk 组件无法加载，需要 `PLATFORM=linux/arm64`
+- **PlayIntegrityFix v4.9 已带 x86_64 库**：amd64 可加载；但 A13+ DEVICE 需要硬件 keybox，reDroid 无 TEE，默认只能到 BASIC
 - `/data/media` 使用 tmpfs，sdcard 数据不持久
-- GPS Setter / FakeSensor / Waydroid Network Spoof 默认已启用并写入作用域；作用域排除 `android` / `system`
+- 10 个 Xposed 模块默认启用并写入作用域；作用域排除 `android` / `system` / GMS / Play Store / SystemUI
 - 新安装的应用在下次容器启动时自动加入作用域；不重启时可在 LSPosed 管理器手动勾选
 - LSPosed 首次启动会让 system_server 软重启一次；`boot-complete` 只执行一次，容器本身只启动一次
 - 首次启动约 3 分钟完成模块、Xposed 和 LSPosed 配置
+- SpoofMyDevice / DeviceSpoofLab / PrivacyKit 需要自身 app 内配置；PrivacyKit/PrivacyKitLite 的 API 102 与 LSPosed 1.9.2 不匹配时可能不生效

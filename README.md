@@ -10,13 +10,17 @@
 
 | 功能         | 方案                               |
 | ------------ | ---------------------------------- |
-| 机型指纹     | PlayIntegrityFork + 启动参数       |
+| 机型指纹     | PlayIntegrityFix（x86_64）+ 启动参数 |
 | Root 隐藏    | Shamiko                            |
 | 应用列表隐藏 | HMA-OSS（Zygisk 版，无需 LSPosed） |
 | 摄像头       | ReCam                              |
 | WiFi         | Waydroid Network Spoof（Xposed，需 LSPosed） |
 | GPS          | GPS Setter（Xposed，需 LSPosed）   |
 | 传感器       | FakeSensor（Xposed，需 LSPosed）   |
+| 设备标识     | Hide My Device / AndroidFaker（Xposed） |
+| SIM / 运营商 | TelephonySpoofer（Xposed） |
+| 机型属性     | Magisk-DeviceSpoofer（Pixel 6a） |
+| 电池 / 充电  | dumpsys battery（启动时写入） |
 
 ## 目录结构
 
@@ -40,11 +44,19 @@ droid-kit/
 | --------------------- | -------------------- | ---------------------------------------------------------------- |
 | Shamiko.zip           | Magisk（Zygisk）     | https://github.com/LSPosed/LSPosed.github.io/releases            |
 | LSPosed-zygisk.zip    | Magisk（Zygisk）     | https://github.com/LSPosed/LSPosed/releases                      |
-| PlayIntegrityFork.zip | Magisk（Zygisk）     | https://github.com/osm0sis/PlayIntegrityFork/releases            |
+| PlayIntegrityFix.zip  | Magisk（Zygisk）     | https://github.com/KOWX712/PlayIntegrityFix/releases            |
 | HMA-OSS-zygisk.zip    | Magisk（Zygisk）     | https://github.com/frknkrc44/HMA-OSS/releases                    |
 | GPS-Setter.apk        | Xposed（需 LSPosed） | https://github.com/Xposed-Modules-Repo/com.android1500.gpssetter |
 | FakeSensor.apk        | Xposed（需 LSPosed） | https://github.com/qilin7762-netizen/FakeSensor                  |
 | WaydroidNetworkSpoof.apk | Xposed（需 LSPosed） | https://github.com/arkaroy14/waydroid_network_spoof/releases  |
+| HideMyDevice.apk          | Xposed（需 LSPosed） | https://github.com/imkamaran/HideMyDevice/releases              |
+| TelephonySpoofer.apk      | Xposed（需 LSPosed） | https://github.com/brianwalczak/TelephonySpoofer/releases       |
+| AndroidFaker.apk          | Xposed（需 LSPosed） | https://github.com/Android1500/AndroidFaker/releases            |
+| DeviceSpoofLab.apk        | Xposed（需 LSPosed） | https://github.com/yubunus/DeviceSpoofLab-Hooks/releases        |
+| PrivacyKit.apk            | Xposed（需 LSPosed） | https://github.com/Xposed-Modules-Repo/com.sal.privacykit/releases |
+| PrivacyKitLite.apk        | Xposed（需 LSPosed） | https://github.com/Mohithash/privacy-kit-lite/releases         |
+| SpoofMyDevice.apk         | Xposed（需 LSPosed） | https://github.com/BuSung-dev/SpoofMyDevice/releases            |
+| Magisk-DeviceSpoofer-Pixel6a.zip | Magisk | https://github.com/L0NE-6/Magisk-DeviceSpoofer/releases |
 
 一键下载（已验证的版本组合，可按需换成新版本）：
 
@@ -52,11 +64,20 @@ droid-kit/
 cd modules/
 curl -fLO https://github.com/LSPosed/LSPosed.github.io/releases/download/shamiko-414/Shamiko-v1.2.5-414-release.zip
 curl -fLO https://github.com/LSPosed/LSPosed/releases/download/v1.9.2/LSPosed-v1.9.2-7024-zygisk-release.zip
-curl -fLO https://github.com/osm0sis/PlayIntegrityFork/releases/download/v19/PlayIntegrityFork-v19.zip
+curl -fL -o PlayIntegrityFix.zip https://github.com/KOWX712/PlayIntegrityFix/releases/download/v4.9-inject-s/PlayIntegrityFix_v4.9-inject-s.zip
 curl -fLO https://github.com/frknkrc44/HMA-OSS/releases/download/oss-177/HMA-OSS-ZYGISK-oss-177-release.zip
 curl -fL -o GPS-Setter.apk https://github.com/Xposed-Modules-Repo/com.android1500.gpssetter/releases/download/v1.2.8/app-release.apk
 curl -fL -o FakeSensor.apk https://github.com/qilin7762-netizen/FakeSensor/releases/download/v1.0.0/app-debug.apk
 curl -fL -o WaydroidNetworkSpoof.apk https://github.com/arkaroy14/waydroid_network_spoof/releases/download/20260317-1.2.0/WaydroidNetworkSpoof-v1.2.0.apk
+curl -fL -o HideMyDevice.apk https://github.com/imkamaran/HideMyDevice/releases/download/2-1.1.0/HideMyDevice-1.1.0-release.apk
+curl -fL -o TelephonySpoofer.apk https://github.com/brianwalczak/TelephonySpoofer/releases/download/v1.0.0/TelephonySpoofer.apk
+curl -fL -o AndroidFaker.apk https://github.com/Android1500/AndroidFaker/releases/download/v1.9.2/app-release.apk
+curl -fL -o DeviceSpoofLab.apk https://github.com/yubunus/DeviceSpoofLab-Hooks/releases/download/v1.3/app-debug.apk
+curl -fL -o PrivacyKit.apk https://github.com/Xposed-Modules-Repo/com.sal.privacykit/releases/download/112-3.7.1/PrivacyKit-3.7.1.apk
+curl -fL -o PrivacyKitLite.apk https://github.com/Mohithash/privacy-kit-lite/releases/download/v0.4.0/app-release.apk
+curl -fL -o SpoofMyDevice.apk https://github.com/BuSung-dev/SpoofMyDevice/releases/download/v2.0.1/app-debug.apk
+curl -fLO https://github.com/L0NE-6/Magisk-DeviceSpoofer/releases/download/v31/Magisk-DeviceSpoofer_Google_40_v31.zip
+unzip -p Magisk-DeviceSpoofer_Google_40_v31.zip "Pixel 6a (bluejay)/Pixel 6a (GB62Z).zip" > Magisk-DeviceSpoofer-Pixel6a.zip
 ```
 
 > 构建脚本会自动区分两类模块：含 `module.prop` 的 zip 作为 Magisk 模块解包打入；APK 作为 Xposed 模块打入（启动时自动 `pm install`）。模块更新频繁，建议固定 release 版本。
@@ -128,7 +149,7 @@ docker run -itd --privileged --name droid-kit \
 1. Magisk 环境自举（优先使用 `/cache/data_adb/magisk`；该目录缺失时由 `/system/etc/init/magisk` 下的 busybox / util_functions.sh 补齐）
 2. Zygisk 自动开启（仅首次；之后可在管理器里自行关闭）
 3. Magisk 模块经完整安装流水线装入（含各模块自带的 customize.sh，按架构放置二进制），并交给同一轮启动的 `magisk --post-fs-data` 立即合并
-4. Xposed 应用（GPS Setter / FakeSensor / Waydroid Network Spoof）安装，并写入 LSPosed 默认启用与作用域
+4. 全部 Xposed 模块（10 个）安装，并写入 LSPosed 默认启用与作用域
 5. LSPosed / HMA 管理器与 Magisk 管理器自动安装
 
 模块和 Xposed 应用都在首启内完成，**不需要 `docker restart`**。LSPosed 首次启动会让 system_server 软重启一次；`boot-complete` 只执行一次。
@@ -141,7 +162,7 @@ adb -s localhost:5555 shell ps -A | grep -E "lspd|zygiskd"  # lspd = LSPosed 已
 adb -s localhost:5555 shell pm list packages -3              # 应看到 magisk / gpssetter / fakesensor / hma_oss / lsposed manager
 ```
 
-GPS Setter / FakeSensor / Waydroid Network Spoof 默认已在 LSPosed 中启用并写入作用域；Waydroid Network Spoof 首次生效需重启目标应用。新安装的应用会在下次容器启动时自动加入作用域，也可在 LSPosed 管理器里手动勾选。
+所有 Xposed 模块默认已在 LSPosed 中启用并写入作用域；Waydroid Network Spoof / Hide My Device / TelephonySpoofer / AndroidFaker / DeviceSpoofLab / PrivacyKit / SpoofMyDevice 首次生效需重启目标应用。新安装的应用会在下次容器启动时自动加入作用域，也可在 LSPosed 管理器里手动勾选。SpoofMyDevice / DeviceSpoofLab / PrivacyKit 需要在其 app 内分配 profile 或启用对应开关；Hide My Device / TelephonySpoofer / Magisk-DeviceSpoofer 已预置默认值。
 
 ## 使用
 
@@ -163,7 +184,7 @@ cd /system/etc/recam
 
 - 通过 Play Integrity、银行类应用检测存在封号风险，请自行评估；反检测模块随目标策略调整可能随时失效
 - **`/data/media` 必须支持 POSIX ACL**：vold 启动时会对它设置默认 ACL。Docker overlayfs（底层 ZFS 未开启 `acltype=posixacl` 时）会报 `Operation not supported`，表现为 `/data/user_de/0` 建不出来、`com.android.phone` 反复崩溃、系统重启循环。`droid-kit-setup` 会自动挂 tmpfs 规避；如需持久化内部存储，改为 bind mount ext4/xfs 目录
-- **PlayIntegrityFork 官方 zip 仅含 ARM 库**：`linux/amd64` 容器上其 Zygisk 组件无法加载（日志报 `unloaded` / 缺 `zygisk/x86_64.so`），指纹伪装需要 `PLATFORM=linux/arm64` 构建的镜像；其余模块均自带 x86_64 库不受影响
+- **PlayIntegrityFix v4.9 已带 x86_64 库**，amd64 可加载；但 A13+ 的 DEVICE 判定需要硬件 keybox，reDroid 无 TEE，默认只能到 BASIC，不要期望 DEVICE/STRONG
 - 构建期需联网下载 Magisk（已带校验和与重试）；网络不稳导致失败时重跑 `./build.sh` 即可
 - 社区反馈：开启 Zygisk 后个别环境 adb 无法连接；多实例场景第二台容器可能启动失败
 - 更新模块建议直接替换 `modules/` 内文件并重新构建镜像，比在管理器内升级更可控

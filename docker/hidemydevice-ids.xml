@@ -1,0 +1,29 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <boolean name="enabled" value="true" />
+    <boolean name="random_each_launch" value="false" />
+    <string name="imei">356938035643809</string>
+    <string name="serial">R58M12ABCD34</string>
+    <string name="android_id">de5e71ed7633f6dd</string>
+    <string name="advertising_id">2c4ab05e-f238-4170-9d60-9fcc817fa2cb</string>
+    <string name="media_drm">4ced6dad66b8d0fb9e1924b2ff6ee993</string>
+    <string name="brand">google</string>
+    <string name="manufacturer">Google</string>
+    <string name="model">Pixel 6a</string>
+    <string name="wifi_mac">02:1A:2B:3C:4D:5E</string>
+    <string name="bssid">02:1A:2B:3C:4D:5F</string>
+    <string name="ssid">Home-WiFi-5G</string>
+    <string name="bt_mac">02:1A:2B:3C:4D:60</string>
+    <string name="sim_serial">89012608812345678901</string>
+    <string name="sub_id">310260123456789</string>
+    <string name="mobile_no">+14155550123</string>
+    <string name="spoof_timezone">America/Los_Angeles</string>
+    <string name="spoof_region">US</string>
+    <boolean name="hide_vpn" value="true" />
+    <boolean name="hide_dev_mode" value="true" />
+    <boolean name="spoof_play_store" value="true" />
+    <boolean name="spoof_lan_scan" value="true" />
+    <boolean name="spoof_wifi_scans" value="true" />
+    <boolean name="realistic_sensors" value="false" />
+    <boolean name="proxy_enabled" value="false" />
+</map>

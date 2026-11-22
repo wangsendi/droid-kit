@@ -19,9 +19,50 @@ LOG="${MARKERS}/boot.log"
 SQLRUN="/system/etc/droid-kit/sqlrun"
 LSPD_CONFIG="/data/adb/lspd/config/modules_config.db"
 LSPOSED_MODULES="com.android1500.gpssetter com.app.fakesensor com.waydroid.networkspoof"
+XPOSED_CONF="/system/etc/droid-kit/xposed-modules.conf"
+HMD_PKG="io.github.imkamaran.hidemydevice"
+TSP_PKG="com.brianwalczak.telephonyspoofer"
 
 mkdir -p "${MARKERS}" 2>/dev/null
 log() { echo "$(date '+%m-%d %H:%M:%S') $*" >>"${LOG}" 2>/dev/null; }
+
+install_xposed_prefs() {
+    pkg="$1"
+    prefs="$2"
+    tmpl="$3"
+    [ -f "$tmpl" ] || return
+    dir="/data/user/0/$pkg"
+    uid="$(pm list packages -U 2>/dev/null | sed -n "s/^package:$pkg uid:\([0-9]*\).*/\1/p" | head -n1)"
+    [ -n "$uid" ] || uid="$(dumpsys package "$pkg" 2>/dev/null | sed -n 's/.*userId=\([0-9]*\).*/\1/p' | head -n1)"
+    [ -n "$uid" ] || {
+        log "prefs: uid not found: $pkg"
+        return
+    }
+    for base in "/data/user/0/$pkg" "/data/data/$pkg"; do
+        mkdir -p "$base/shared_prefs"
+        cp "$tmpl" "$base/shared_prefs/$prefs.xml"
+        chown -R "$uid:$uid" "$base"
+        chmod 0771 "$base" "$base/shared_prefs" 2>/dev/null
+        chmod 0666 "$base/shared_prefs/$prefs.xml" 2>/dev/null
+    done
+    # LSPosed 新版 XSharedPreferences 路径：/data/misc/<uuid>/prefs/<pkg>/<name>.xml
+    for base in $(find /data/misc -mindepth 1 -maxdepth 1 -type d -name '*-*-*-*-*' 2>/dev/null); do
+        mkdir -p "$base/prefs/$pkg"
+        cp "$tmpl" "$base/prefs/$pkg/$prefs.xml"
+        chmod 0771 "$base" "$base/prefs" "$base/prefs/$pkg" 2>/dev/null
+        chmod 0666 "$base/prefs/$pkg/$prefs.xml" 2>/dev/null
+    done
+    log "prefs installed: $pkg/$prefs"
+}
+
+set_battery() {
+    dumpsys battery set level 87 >/dev/null 2>&1
+    dumpsys battery set temp 305 >/dev/null 2>&1
+    dumpsys battery set status 2 >/dev/null 2>&1
+    dumpsys battery set ac 1 >/dev/null 2>&1
+    dumpsys battery set present 1 >/dev/null 2>&1
+    log "battery spoof applied"
+}
 
 lsposed_configure() {
     [ -x "${SQLRUN}" ] || {
@@ -50,10 +91,13 @@ lsposed_configure() {
 
     pkg_values=""
     for p in $(pm list packages 2>/dev/null | sed 's/^package://'); do
+        case " ${LSPOSED_MODULES} " in
+        *" $p "*) continue ;;
+        esac
         case "$p" in
-        com.android1500.gpssetter | com.app.fakesensor | com.waydroid.networkspoof | \
-            org.lsposed.manager | com.topjohnwu.magisk | org.frknkrc44.hma_oss | \
-            android | system)
+        org.lsposed.manager | com.topjohnwu.magisk | org.frknkrc44.hma_oss | \
+            android | system | com.android.systemui | com.android.providers.settings | \
+            com.google.android.gms | com.google.android.gsf | com.android.vending)
             continue
             ;;
         esac
@@ -213,6 +257,21 @@ late-start)
     done
     sleep 1
 
+    install_xposed_prefs "$HMD_PKG" ids /system/etc/droid-kit/hidemydevice-ids.xml
+    install_xposed_prefs "$TSP_PKG" config /system/etc/droid-kit/telephonyspoofer-config.xml
+
+    # 从映射文件读取 Xposed 模块包名；新增 APK 只需修改 xposed-modules.conf
+    if [ -f "${XPOSED_CONF}" ]; then
+        LSPOSED_MODULES=""
+        while read -r apk pkg; do
+            case "$apk" in
+            '' | '#'*) continue ;;
+            esac
+            [ -n "$pkg" ] && LSPOSED_MODULES="${LSPOSED_MODULES} $pkg"
+        done <"${XPOSED_CONF}"
+        LSPOSED_MODULES="${LSPOSED_MODULES# }"
+    fi
+
     lsposed_configure
     ;;
 
@@ -220,14 +279,19 @@ boot-complete)
     if [ -e "${MARKERS}/boot-complete-done" ]; then
         # system_server 软重启后会再次触发；此时 Magisk 管理器可能已被 fork 卸载
         sleep 30
+        install_xposed_prefs "$HMD_PKG" ids /system/etc/droid-kit/hidemydevice-ids.xml
+        install_xposed_prefs "$TSP_PKG" config /system/etc/droid-kit/telephonyspoofer-config.xml
         if ! pm path com.topjohnwu.magisk >/dev/null 2>&1; then
             pm install /system/etc/init/magisk/magisk.apk >/dev/null 2>&1 \
                 && log "manager reinstalled (post-restart)"
         fi
+        set_battery
         log "=== boot-complete already done (system_server restart) ==="
         exit 0
     fi
     sleep 20
+    install_xposed_prefs "$HMD_PKG" ids /system/etc/droid-kit/hidemydevice-ids.xml
+    install_xposed_prefs "$TSP_PKG" config /system/etc/droid-kit/telephonyspoofer-config.xml
     mkdir -p "${MARKERS}/managers"
 
     # 模块自带的管理器 APK：它们在 post-fs-data 阶段调用 pm 会失败，
@@ -249,6 +313,7 @@ boot-complete)
         pm install /system/etc/init/magisk/magisk.apk >/dev/null 2>&1 \
             && log "manager reinstalled"
     fi
+    set_battery
     log "=== boot-complete done ==="
     touch "${MARKERS}/boot-complete-done" 2>/dev/null
     ;;

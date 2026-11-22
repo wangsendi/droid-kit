@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # 反检测 Android 容器：reDroid 13 + Magisk（Zygisk）+ 预置模块。
 # Magisk 集成方案基于 ayasa520/redroid-script 的已验证实现：
 #   https://github.com/ayasa520/redroid-script
@@ -57,6 +55,8 @@ RUN gzip -9 -c /staged/system/etc/init/bootanim-original.rc > /staged/system/etc
  && rm /staged/system/etc/init/bootanim-original.rc
 
 COPY docker/droid-kit-setup.sh /staged/system/bin/droid-kit-setup
+COPY docker/xposed-modules.conf /staged/system/etc/droid-kit/xposed-modules.conf
+COPY docker/hidemydevice-ids.xml docker/telephonyspoofer-config.xml /staged/system/etc/droid-kit/
 RUN chmod 0755 /staged/system/bin/droid-kit-setup
 
 # 预置模块：Magisk 模块解包到 magisk-preload/，Xposed 模块原样放到 xposed-modules/
