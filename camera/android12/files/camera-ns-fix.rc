@@ -1,0 +1,14 @@
+# droid-kit: allow the vendor camera provider to load the system-built
+# camera.v4l2.so and its platform dependencies from /system/lib64.
+#
+# This is a workaround for the legacy V4L2 HAL, which was designed before
+# Treble and links against libcamera_client from the system partition.
+#
+# Android 12 puts the generated linker config in one of these locations
+# depending on the build; patch whichever exists.
+#
+# Verify after boot:
+#   adb shell 'grep -n "namespace.default" /linkerconfig/default/ld.config.txt'
+#   adb logcat -d | grep -iE 'camera|linker'
+on property:apexd.status=activated
+    exec -- /system/bin/sh -c "f=/linkerconfig/default/ld.config.txt; [ -f $f ] || f=/linkerconfig/ld.config.txt; [ -f $f ] && sed -i 's|namespace.default.search.paths = /vendor/|namespace.default.search.paths = /system/lib64:/vendor/|g; s|namespace.default.permitted.paths = /vendor/|namespace.default.permitted.paths = /system/lib64:/vendor/|g' $f"

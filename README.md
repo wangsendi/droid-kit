@@ -1,10 +1,10 @@
 # droid-kit
 
-反检测 Android 容器模板（Android 13，基于 reDroid）。
+反检测 Android 容器模板（Android 13，基于 reDroid），另附 Android 12 legacy V4L2 相机方案。
 
 镜像内置 Magisk（Delta 系 v31.1，含 Zygisk 支持）与全部反检测模块资产，首次启动自动完成安装、默认启用并写入作用域（容器无需重启；LSPosed 启动后 system_server 软重启一次）。Magisk 集成方案来自社区已验证实现 [ayasa520/redroid-script](https://github.com/ayasa520/redroid-script)。
 
-启动流程与实测记录见 [docs/BOOT.md](docs/BOOT.md)。
+启动流程与实测记录见 [docs/BOOT.md](docs/BOOT.md)；Android 12 相机方案见 [docs/CAMERA-ANDROID12.md](docs/CAMERA-ANDROID12.md)。
 
 ## 功能
 
@@ -13,7 +13,7 @@
 | 机型指纹     | PlayIntegrityFix（x86_64）+ 启动参数 |
 | Root 隐藏    | Shamiko                            |
 | 应用列表隐藏 | HMA-OSS（Zygisk 版，无需 LSPosed） |
-| 摄像头       | ReCam                              |
+| 摄像头       | ReCam（需已有相机）/ Android 12 V4L2（见 docs/CAMERA-ANDROID12.md） |
 | WiFi         | Waydroid Network Spoof（Xposed，需 LSPosed） |
 | GPS          | GPS Setter（Xposed，需 LSPosed）   |
 | 传感器       | FakeSensor（Xposed，需 LSPosed）   |
@@ -26,15 +26,31 @@
 
 ```text
 droid-kit/
+├── camera/                   # Android 12 V4L2 相机 HAL/provider 构建与运行脚本
+│   ├── android12/
+│   ├── host/
+│   └── verify/
 ├── docker/                  # 构建资产（bootanim.rc、模块分类脚本等）
-├── docs/                     # 启动流程与验证记录
+├── docs/                     # 启动流程、验证记录、Android 12 相机方案
 ├── modules/                 # 模块 zip/apk（自行下载，构建时打入镜像，不入库）
 ├── recam/                   # ReCam 二进制（自行下载，构建时打入镜像，不入库）
 ├── Dockerfile               # 多阶段构建：拉取 Magisk + 分类打入模块
+├── Dockerfile.android12-camera  # Android 12 + camera.v4l2 变体
 ├── build.sh
 ├── .dockerignore
 └── .gitignore
 ```
+
+## 镜像变体
+
+| Tag | Base | 用途 |
+| --- | --- | --- |
+| `droid-kit:13` | Redroid 13 / API 33 | 反检测 + Magisk + Xposed 模块（默认） |
+| `droid-kit:12-camera` | Redroid 12 / API 31 | 最小 Android 12 相机测试镜像（camera.v4l2） |
+
+> Android 12 相机变体是独立的最小镜像，不预装 Android 13 那套 Magisk/Xposed 模块。
+> 如果需要在 Android 12 上同时保留反检测模块，先按 `docs/BOOT.md` 的模块流程做
+> 版本适配，并注意 Pixel 6a 的 API 32 与 Android 12/API 31 不一致。
 
 ## 准备
 
@@ -103,7 +119,10 @@ sudo modprobe binder_linux
 ```bash
 ./build.sh                        # 默认 tag 13，linux/amd64
 PLATFORM=linux/arm64 ./build.sh   # arm64（recam/ 需换成 arm64 版）
+./build.sh --android12-camera     # Android 12 + camera.v4l2，默认 tag 12-camera
 ```
+
+> `--android12-camera` 需要先用 `camera/android12/setup-aosp.sh` 同步 AOSP 12，并用 `camera/android12/build.sh` 编出 `camera.v4l2.so` 与 HIDL 2.4 provider。官方 Redroid 12 镜像本身不带这些文件。
 
 构建只产出系统资产镜像：
 
@@ -181,6 +200,31 @@ cd /system/etc/recam
 ./recam inject
 ./recam feed <视频文件或流地址>
 ```
+
+> ReCam 只替换“已经打开成功”的相机会话画面，不会凭空创建相机。Android 13 镜像本身没有 camera provider，所以单纯装 ReCam 仍然无法让 App 打开摄像头；需要先按 Android 12 相机方案补 HAL。
+
+## Android 12 相机方案（可选）
+
+目标：让 Redroid 里的 Chrome/WebView 通过 `getUserMedia` 拿到一个看起来正常的后摄设备。
+
+```bash
+# 1. 宿主准备视频源
+camera/host/setup-v4l2loopback.sh
+camera/host/feed.sh /path/to/video.mp4
+
+# 2. 同步并编译 AOSP 12 HAL/provider（首次耗时）
+cd camera/android12
+./setup-aosp.sh
+./build.sh
+
+# 3. 启动 Android 12 容器（bind-mount，不重打包）
+./run.sh
+
+# 4. 验证
+../verify/verify-camera.sh
+```
+
+详细说明、补丁和已知问题见 [docs/CAMERA-ANDROID12.md](docs/CAMERA-ANDROID12.md)。
 
 ## 已知问题与风险
 

@@ -1,0 +1,46 @@
+# droid-kit Android 12 camera variant.
+#
+# The Redroid image is an Android rootfs without /bin/sh, so all chmod/property
+# work happens in a Debian prep stage. The final stage is copy-only, matching
+# the main droid-kit Dockerfile.
+ARG BASE_IMAGE=redroid/redroid:12.0.0_64only-latest
+
+FROM ${BASE_IMAGE} AS base
+
+FROM debian:bookworm-slim AS prep
+
+# provider service + HAL + provider rc + provider/device impl libs
+COPY camera/android12/vendor/ /staged/vendor/
+
+# VINTF fragment (merged with the base manifest; no full manifest replacement)
+COPY camera/android12/files/manifest-camera.xml /staged/vendor/etc/vintf/manifest/manifest-camera.xml
+
+# linker namespace workaround for the legacy HAL
+COPY camera/android12/files/camera-ns-fix.rc /staged/vendor/etc/init/camera-ns-fix.rc
+
+# Take the base build.prop files and add ro.hardware.camera before boot.
+COPY --from=base /vendor/build.prop /staged/vendor/build.prop
+COPY --from=base /system/build.prop /staged/system/build.prop
+
+RUN set -e; \
+    chmod 0755 /staged/vendor/bin/hw/android.hardware.camera.provider@2.4-service_64; \
+    chmod 0644 /staged/vendor/lib64/hw/camera.v4l2.so; \
+    chmod 0644 /staged/vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc; \
+    chmod 0644 /staged/vendor/etc/init/camera-ns-fix.rc; \
+    for f in /staged/vendor/build.prop /staged/system/build.prop; do \
+      if [ -L "$f" ]; then \
+        cp --dereference "$f" "$f.tmp"; \
+        mv "$f.tmp" "$f"; \
+      fi; \
+      if ! grep -q '^ro.hardware.camera=' "$f"; then \
+        echo 'ro.hardware.camera=v4l2' >> "$f"; \
+      fi; \
+    done
+
+FROM base
+
+COPY --from=prep /staged/ /
+
+LABEL org.opencontainers.image.title="droid-kit-camera" \
+      org.opencontainers.image.description="Redroid Android 12 with legacy camera.v4l2 HAL and HIDL 2.4 camera provider" \
+      org.opencontainers.image.source="https://github.com/wangsendi/droid-kit"

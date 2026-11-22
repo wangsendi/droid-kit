@@ -1,0 +1,15 @@
+<!-- droid-kit: legacy camera provider (HIDL 2.4) backed by camera.v4l2.
+     This is a VINTF fragment. It is merged with the base image manifest, so
+     audio/bluetooth/graphics declarations are preserved. -->
+<manifest version="1.0" type="device">
+    <hal format="hidl">
+        <name>android.hardware.camera.provider</name>
+        <transport>hwbinder</transport>
+        <version>2.4</version>
+        <interface>
+            <name>ICameraProvider</name>
+            <instance>legacy/0</instance>
+        </interface>
+        <fqname>@2.4::ICameraProvider/legacy/0</fqname>
+    </hal>
+</manifest>

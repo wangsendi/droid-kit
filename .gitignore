@@ -5,6 +5,14 @@ recam/
 # 构建期下载的 Magisk APK
 docker/Magisk-*.apk
 
+# Android 12 camera 构建产物（由 camera/android12/build.sh 生成）
+camera/android12/vendor/
+camera/android12/prebuilt/lib64/
+camera/android12/prebuilt/bin/
+camera/android12/prebuilt/etc/
+camera/android12/.ccache/
+camera/android12/out/
+
 # 运行时数据卷
 data/
 

@@ -1,24 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ ${1-} == '-h' || ${1-} == '--help' ]]; then
-  printf 'Usage: %s [tag]\nDefault tag: 13. Set PLATFORM to linux/amd64 (default) or linux/arm64.\n' "${0##*/}"
-  printf 'Requires: modules/*.zip and recam/{recam,librecam.so} — see README "准备".\n'
-  printf 'Build: 构建系统资产镜像；首启自动安装 Magisk 模块与 Xposed 应用。\n'
-  exit 0
-fi
+usage() {
+  cat <<'EOF'
+Usage:
+  ./build.sh [tag]                     Build Android 13 droid-kit image (default tag: 13)
+  ./build.sh --android12-camera [tag]  Build Android 12 camera image (default tag: 12-camera)
+
+Environment:
+  PLATFORM=linux/amd64|linux/arm64    Build platform (Android 12 camera is amd64 only)
+  BASE_IMAGE=<image>                  Override Android 12 base image
+  AOSP_DIR=<path>                     AOSP 12 tree for camera/android12/build.sh
+  BUILD_IN_DOCKER=1                   Build AOSP 12 HAL/provider in Ubuntu 20.04 builder
+EOF
+}
+
+mode=13
+case "${1-}" in
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  --android12-camera | --camera12)
+    mode=12
+    shift
+    ;;
+  --*)
+    printf 'Unknown option: %s\n' "$1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
 
 if [[ $# -gt 1 ]]; then
-  printf 'Usage: %s [tag]\n' "${0##*/}" >&2
+  usage >&2
   exit 2
 fi
 
-tag=${1-13}
-if [[ ! $tag =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
-  printf 'Invalid Docker image tag: %s\n' "$tag" >&2
-  exit 2
-fi
-
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 platform=${PLATFORM:-linux/amd64}
 case "$platform" in
   linux/amd64 | linux/arm64) ;;
@@ -28,7 +47,34 @@ case "$platform" in
     ;;
 esac
 
-repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+if [[ $mode == 12 ]]; then
+  tag=${1:-12-camera}
+  if [[ ! $tag =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+    printf 'Invalid Docker image tag: %s\n' "$tag" >&2
+    exit 2
+  fi
+  if [[ $platform != linux/amd64 ]]; then
+    printf 'Android 12 camera variant currently supports linux/amd64 only\n' >&2
+    exit 2
+  fi
+  if [[ ! -f $repo_dir/Dockerfile.android12-camera ]]; then
+    printf 'Missing Dockerfile.android12-camera\n' >&2
+    exit 1
+  fi
+  "$repo_dir/camera/android12/build.sh"
+  docker buildx build --platform "$platform" \
+    --file "$repo_dir/Dockerfile.android12-camera" \
+    --build-arg "BASE_IMAGE=${BASE_IMAGE:-redroid/redroid:12.0.0_64only-latest}" \
+    --tag "droid-kit:$tag" --load "$repo_dir"
+  printf '构建完成：droid-kit:%s（Android 12 + camera.v4l2，需要 /dev/video* 与 v4l2loopback）\n' "$tag"
+  exit 0
+fi
+
+tag=${1:-13}
+if [[ ! $tag =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+  printf 'Invalid Docker image tag: %s\n' "$tag" >&2
+  exit 2
+fi
 
 if ! compgen -G "$repo_dir/modules/*.zip" >/dev/null; then
   printf 'Error: no module zip in modules/ — download modules first (see README "准备").\n' >&2

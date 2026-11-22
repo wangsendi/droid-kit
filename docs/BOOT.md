@@ -4,7 +4,7 @@
 
 ## 设计目标
 
-- 镜像只包含系统资产（Magisk 二进制、模块 zip、Xposed APK、ReCam）
+- 镜像只包含系统资产（Magisk 二进制、模块 zip、Xposed APK、ReCam）；Android 12 相机 HAL/provider 通过 `camera/android12/` 单独构建
 - 首次启动自动完成全部安装、默认启用并写入作用域，**不需要重启容器**（LSPosed 启动后 system_server 会软重启一次）
 - Zygisk 保留 reDroid 的 native bridge（ARM 转译）能力
 - 不依赖宿主机 `/data` 支持 POSIX ACL
@@ -309,7 +309,7 @@ com.android.phone FATAL: 0
 | Root / 应用列表 | Shamiko、HMA-OSS |
 | WiFi / 网络 | Waydroid Network Spoof、TelephonySpoofer |
 | GPS / 传感器 | GPS Setter、FakeSensor |
-| 摄像头 | ReCam |
+| 摄像头 | ReCam（需已有相机）；Android 12 V4L2 方案见 `docs/CAMERA-ANDROID12.md` |
 | 电池 | `dumpsys battery set` 启动写入 |
 
 这些模块都和普通模块一样安装、在 LSPosed 中启用并写入作用域。各模块自身的配置需求：

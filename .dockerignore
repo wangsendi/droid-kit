@@ -1,9 +1,12 @@
 **
 !Dockerfile
+!Dockerfile.android12-camera
 !docker/
 !docker/**
 !modules/
 !modules/**
 !recam/
 !recam/**
+!camera/
+!camera/**
 

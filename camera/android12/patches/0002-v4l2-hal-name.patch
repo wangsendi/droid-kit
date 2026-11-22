@@ -1,0 +1,13 @@
+--- a/hardware/libhardware/modules/camera/3_4/v4l2_camera_hal.cpp
++++ b/hardware/libhardware/modules/camera/3_4/v4l2_camera_hal.cpp
+@@ -225,8 +225,8 @@
+             .module_api_version = CAMERA_MODULE_API_VERSION_2_4,
+             .hal_api_version = HARDWARE_HAL_API_VERSION,
+             .id = CAMERA_HARDWARE_MODULE_ID,
+-            .name = "V4L2 Camera HAL v3",
+-            .author = "The Android Open Source Project",
++            .name = "Camera HAL v3",
++            .author = "Google",
+             .methods = &v4l2_module_methods,
+             .dso = nullptr,
+             .reserved = {0},
