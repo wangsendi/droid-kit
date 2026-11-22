@@ -9,7 +9,7 @@ set -euo pipefail
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 AOSP_DIR=${AOSP_DIR:-/app/data/aosp12}
 JOBS=${JOBS:-16}
-BUILD_IN_DOCKER=${BUILD_IN_DOCKER:-0}
+BUILD_IN_DOCKER=${BUILD_IN_DOCKER:-1}
 BUILDER_IMAGE=${BUILDER_IMAGE:-droid-kit-aosp12-builder}
 LUNCH_TARGET=${LUNCH_TARGET:-aosp_x86_64-eng}
 HOST_AOSP_DIR=${HOST_AOSP_DIR:-$AOSP_DIR}
@@ -33,7 +33,10 @@ fi
 if [[ ${FORCE_BUILD:-0} != 1 \
    && -s "$OUT/lib64/hw/camera.v4l2.so" \
    && -x "$OUT/bin/hw/android.hardware.camera.provider@2.4-service_64" \
-   && -f "$OUT/etc/init/android.hardware.camera.provider@2.4-service_64.rc" ]]; then
+   && -f "$OUT/etc/init/android.hardware.camera.provider@2.4-service_64.rc" \
+   && -f "$OUT/lib64/hw/android.hardware.camera.provider@2.4-impl.so" ]] \
+   && file "$OUT/lib64/hw/camera.v4l2.so" | grep -q 'ELF 64-bit' \
+   && file "$OUT/bin/hw/android.hardware.camera.provider@2.4-service_64" | grep -q 'ELF 64-bit'; then
   echo "Reusing staged artifacts in $OUT (set FORCE_BUILD=1 to rebuild)"
   exit 0
 fi
@@ -64,7 +67,6 @@ cd /aosp
 set +u
 source build/envsetup.sh
 lunch "$LUNCH_TARGET"
-set -u
 export USE_CAMERA_V4L2_HAL=true
 m -j"$JOBS" camera.v4l2 android.hardware.camera.provider@2.4-service_64 android.hardware.camera.provider@2.4-impl
 EOS
@@ -88,7 +90,6 @@ else
   set +u
   source build/envsetup.sh
   lunch "$LUNCH_TARGET"
-  set -u
   export USE_CAMERA_V4L2_HAL=true
   m -j"$JOBS" camera.v4l2 android.hardware.camera.provider@2.4-service_64 android.hardware.camera.provider@2.4-impl
 fi
@@ -122,7 +123,7 @@ copy_camera_libs() {
     [[ -e "$f" ]] || continue
     base=$(basename "$f")
     case "$base" in
-      android.hardware.camera* | camera.device@* | libtinyxml2.so | libexif.so | libchrome.so | libjpeg.so | libcamera_client.so | libcamera_metadata.so | libbase.so)
+      android.hardware.camera* | camera.device@* | libtinyxml2.so | libexif.so | libchrome.so | libjpeg.so | libcamera_client.so | libcamera_metadata.so | libbase.so | libui.so | libnativewindow.so | libsync.so | libyuv.so)
         install -m 0644 "$f" "$dest/$base"
         ;;
     esac

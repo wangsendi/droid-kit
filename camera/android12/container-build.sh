@@ -13,8 +13,8 @@ echo "=== droid-kit AOSP12 camera build $(date -u +%FT%TZ) ==="
 
 sed -i 's|http://archive.ubuntu.com/ubuntu|http://mirrors.ustc.edu.cn/ubuntu|g; s|http://security.ubuntu.com/ubuntu|http://mirrors.ustc.edu.cn/ubuntu|g' /etc/apt/sources.list
 
-apt-get update
-apt-get install -y --no-install-recommends \
+apt-get -o Dpkg::Use-Pty=0 update
+apt-get -o Dpkg::Use-Pty=0 install -y --no-install-recommends \
   openjdk-11-jdk \
   python3 python3-pip python-is-python3 \
   git curl ca-certificates \
@@ -53,7 +53,7 @@ echo "=== repo sync ==="
 [[ -d hardware/interfaces/camera/provider/2.4/default ]] || { echo "FATAL: provider source missing"; exit 1; }
 
 echo "=== apply camera.v4l2 patches ==="
-cd "$AOSP_DIR/hardware/libhardware"
+cd /aosp/hardware/libhardware
 for p in /camera/patches/*.patch; do
   [[ -e "$p" ]] || continue
   if git apply -p3 --reverse --check "$p" >/dev/null 2>&1; then
@@ -72,11 +72,10 @@ echo "=== lunch ==="
 set +u
 source build/envsetup.sh
 lunch aosp_x86_64-eng
-set -u
 
 export USE_CAMERA_V4L2_HAL=true
 echo "=== build ==="
-m -j32 camera.v4l2 android.hardware.camera.provider@2.4-service_64 android.hardware.camera.provider@2.4-impl
+m -j"${JOBS:-16}" camera.v4l2 android.hardware.camera.provider@2.4-service_64 android.hardware.camera.provider@2.4-impl
 
 product_dir=$(find /aosp/out/target/product -maxdepth 1 -mindepth 1 -type d | head -1)
 [[ -n "$product_dir" ]] || { echo "FATAL: no product dir"; exit 1; }
@@ -102,7 +101,7 @@ copy_camera_libs() {
     [[ -e "$f" ]] || continue
     base=$(basename "$f")
     case "$base" in
-      android.hardware.camera* | camera.device@* | libtinyxml2.so | libexif.so | libchrome.so | libjpeg.so | libcamera_client.so | libcamera_metadata.so | libbase.so)
+      android.hardware.camera* | camera.device@* | libtinyxml2.so | libexif.so | libchrome.so | libjpeg.so | libcamera_client.so | libcamera_metadata.so | libbase.so | libui.so | libnativewindow.so | libsync.so | libyuv.so)
         install -m 0644 "$f" "$dest/$base"
         ;;
     esac

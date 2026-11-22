@@ -196,10 +196,30 @@ navigator.mediaDevices.getUserMedia({video: true}).then((s) => {
 | `Could not load camera HAL module: -2` | HAL 不在 `/vendor/lib64/hw` | 确认 `docker cp` 路径 |
 | provider 没起来 | VINTF 未声明 `legacy/0` | 检查 `/vendor/etc/vintf/manifest/manifest-camera.xml` |
 | 0 个设备 | `ro.hardware.camera` 没生效 | 检查 `getprop ro.hardware.camera`；确认 `/vendor/build.prop` 已改 |
-| provider 崩溃/找不到 libcamera_client | linker namespace | 检查 `camera-ns-fix.rc` 是否执行；`ld.config.txt` 是否包含 `/system/lib64` |
+| provider 崩溃/找不到 libcamera_client | linker namespace | 检查 `camera-ns-fix.rc` 是否执行；`/linkerconfig/ld.config.txt` 的 sphal 是否包含 `/system/lib64` |
 | 有设备但黑屏 | gralloc/格式不兼容 | 换 `PIX_FMT=yuyv422` 或改 HAL 格式转换；这是最难的一层 |
 | 浏览器 label 仍异常 | HAL metadata 不够 | 确认补丁已生效（`LENS_FACING_BACK`），camera id 为 0 |
 | Android 13 上失败 | HIDL/VINTF 变化 | 本方案只针对 Android 12 |
+
+### 6.0 浏览器 label 是怎么来的
+
+Chrome/WebView 不会读取 HAL 的模块名。它用：
+
+```text
+"camera " + index + ", facing " + {front|back|external|unknown}
+```
+
+- `index` 是 `CameraManager.getCameraIdList()` 里的位置
+- facing 来自 `CameraCharacteristics.LENS_FACING`
+
+所以：
+
+- `camera.v4l2` 只有一台设备、ID 0、`LENS_FACING_BACK` → `camera 0, facing back`
+- 如果保持 `LENS_FACING_EXTERNAL` → `camera 0, facing external`，且
+  `getCapabilities().facingMode` 为 `[]`
+- `INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED` 不会产生 external label
+
+补丁 `0001-v4l2-report-back-camera.patch` 就是改这个值。
 
 ### 6.1 gralloc 风险（重要）
 
