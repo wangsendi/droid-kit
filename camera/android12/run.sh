@@ -25,6 +25,7 @@ die() { echo "error: $*" >&2; exit 1; }
 [[ -f "$vendor/bin/hw/android.hardware.camera.provider@2.4-service_64" ]] || die "missing provider (run ./build.sh)"
 [[ -f "$vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc" ]] || die "missing provider rc (run ./build.sh)"
 [[ -e "$VIDEO_DEV" ]] || die "$VIDEO_DEV not found; load v4l2loopback and start the feed first"
+"$repo_dir/check-artifacts.sh"
 
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 echo "Creating $NAME ($BASE_IMAGE), $VIDEO_DEV -> /dev/video0"

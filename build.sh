@@ -62,6 +62,7 @@ if [[ $mode == 12 ]]; then
     exit 1
   fi
   "$repo_dir/camera/android12/build.sh"
+  "$repo_dir/camera/android12/check-artifacts.sh"
   docker buildx build --platform "$platform" \
     --file "$repo_dir/Dockerfile.android12-camera" \
     --build-arg "BASE_IMAGE=${BASE_IMAGE:-redroid/redroid:12.0.0_64only-latest}" \

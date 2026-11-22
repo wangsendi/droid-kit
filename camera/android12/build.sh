@@ -76,7 +76,7 @@ else
   source build/envsetup.sh
   lunch "$LUNCH_TARGET"
   export USE_CAMERA_V4L2_HAL=true
-  m -j"$JOBS" camera.v4l2 android.hardware.camera.provider@2.4-service_64 android.hardware.camera.provider@2.4-impl
+  m -j"$JOBS" camera.v4l2 android.hardware.camera.provider@2.4-service_64 android.hardware.camera.provider@2.4-impl android.hardware.camera.provider@2.4-legacy android.hardware.camera.provider@2.4-external camera.device@1.0-impl camera.device@3.2-impl camera.device@3.3-impl camera.device@3.4-impl camera.device@3.4-external-impl camera.device@3.5-impl camera.device@3.5-external-impl
 fi
 
 # --- collect artifacts -------------------------------------------------------
@@ -108,7 +108,7 @@ copy_camera_libs() {
     [[ -e "$f" ]] || continue
     base=$(basename "$f")
     case "$base" in
-      android.hardware.camera* | camera.device@* | libtinyxml2.so | libexif.so | libchrome.so | libjpeg.so | libcamera_client.so | libcamera_metadata.so | libbase.so | libui.so | libnativewindow.so | libsync.so | libyuv.so)
+      android.hardware.camera* | camera.device@* | libcamera_metadata.so | libtinyxml2.so)
         install -m 0644 "$f" "$dest/$base"
         ;;
     esac
