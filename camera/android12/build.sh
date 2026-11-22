@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the legacy V4L2 camera HAL and the HIDL 2.4 camera provider from an
-# AOSP 12 tree, then stage them in camera/android12/vendor/ for bind-mounting.
+# AOSP 12 tree, then stage them in camera/android12/vendor/ for docker cp injection.
 #
 # The AOSP tree is expected at $AOSP_DIR (default /app/data/aosp12). Create it
 # with ./setup-aosp.sh first.
@@ -12,6 +12,8 @@ JOBS=${JOBS:-16}
 BUILD_IN_DOCKER=${BUILD_IN_DOCKER:-0}
 BUILDER_IMAGE=${BUILDER_IMAGE:-droid-kit-aosp12-builder}
 LUNCH_TARGET=${LUNCH_TARGET:-aosp_x86_64-eng}
+HOST_AOSP_DIR=${HOST_AOSP_DIR:-$AOSP_DIR}
+HOST_CAMERA_DIR=${HOST_CAMERA_DIR:-$repo_dir}
 OUT="$repo_dir/vendor"
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -40,11 +42,11 @@ fi
 
 patch_one() {
   local patch=$1
-  if git -C "$AOSP_DIR/hardware/libhardware" apply --reverse --check "$patch" >/dev/null 2>&1; then
+  if git -C "$AOSP_DIR/hardware/libhardware" apply -p3 --reverse --check "$patch" >/dev/null 2>&1; then
     echo "already applied: $(basename "$patch")"
-  elif git -C "$AOSP_DIR/hardware/libhardware" apply --check "$patch" >/dev/null 2>&1; then
+  elif git -C "$AOSP_DIR/hardware/libhardware" apply -p3 --check "$patch" >/dev/null 2>&1; then
     echo "applying: $(basename "$patch")"
-    git -C "$AOSP_DIR/hardware/libhardware" apply "$patch"
+    git -C "$AOSP_DIR/hardware/libhardware" apply -p3 "$patch"
   else
     die "cannot apply $patch (tree has local changes or version mismatch)"
   fi
@@ -64,7 +66,7 @@ source build/envsetup.sh
 lunch "$LUNCH_TARGET"
 set -u
 export USE_CAMERA_V4L2_HAL=true
-m -j"$JOBS" camera.v4l2 android.hardware.camera.provider@2.4-service_64
+m -j"$JOBS" camera.v4l2 android.hardware.camera.provider@2.4-service_64 android.hardware.camera.provider@2.4-impl
 EOS
 )
 
@@ -75,8 +77,8 @@ if [[ "$BUILD_IN_DOCKER" == "1" ]]; then
     docker build -t "$BUILDER_IMAGE" -f "$repo_dir/Dockerfile.builder" "$repo_dir"
   fi
   docker run --rm \
-    -v "$AOSP_DIR:/aosp" \
-    -v "$repo_dir:/repo" \
+    -v "$HOST_AOSP_DIR:/aosp" \
+    -v "$HOST_CAMERA_DIR:/repo" \
     -e LUNCH_TARGET="$LUNCH_TARGET" \
     -e JOBS="$JOBS" \
     -w /aosp \
@@ -88,7 +90,7 @@ else
   lunch "$LUNCH_TARGET"
   set -u
   export USE_CAMERA_V4L2_HAL=true
-  m -j"$JOBS" camera.v4l2 android.hardware.camera.provider@2.4-service_64
+  m -j"$JOBS" camera.v4l2 android.hardware.camera.provider@2.4-service_64 android.hardware.camera.provider@2.4-impl
 fi
 
 # --- collect artifacts -------------------------------------------------------
@@ -104,6 +106,7 @@ provider=$(find "$product_dir" -type f -name 'android.hardware.camera.provider@2
 file "$hal" | grep -q 'ELF 64-bit' || die "$hal is not 64-bit"
 file "$provider" | grep -q 'ELF 64-bit' || die "$provider is not 64-bit"
 
+rm -rf "$OUT"
 mkdir -p "$OUT/lib64/hw" "$OUT/bin/hw" "$OUT/etc/init"
 install -m 0644 "$hal" "$OUT/lib64/hw/camera.v4l2.so"
 install -m 0755 "$provider" "$OUT/bin/hw/android.hardware.camera.provider@2.4-service_64"
@@ -119,7 +122,7 @@ copy_camera_libs() {
     [[ -e "$f" ]] || continue
     base=$(basename "$f")
     case "$base" in
-      android.hardware.camera* | camera.device@* | libtinyxml2.so | libexif.so | libchrome.so | libjpeg.so)
+      android.hardware.camera* | camera.device@* | libtinyxml2.so | libexif.so | libchrome.so | libjpeg.so | libcamera_client.so | libcamera_metadata.so | libbase.so)
         install -m 0644 "$f" "$dest/$base"
         ;;
     esac

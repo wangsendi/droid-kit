@@ -15,7 +15,7 @@ LOOP=${LOOP:-1}
 INPUT_FORMAT=${INPUT_FORMAT:-}
 INPUT_DEVICE=${INPUT_DEVICE:-}
 
-input=${1:?usage: feed.sh <file-or-url>   (or INPUT_DEVICE=... and no arg)}
+input=${1-}
 device="/dev/video$VIDEO_NR"
 [[ -e "$device" ]] || { echo "$device not found; run setup-v4l2loopback.sh" >&2; exit 1; }
 

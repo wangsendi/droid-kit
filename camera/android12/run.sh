@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Start a Redroid 12 container with the legacy V4L2 camera HAL bind-mounted in.
-# No image rebuild is required; the base image stays untouched.
+# Start a Redroid 12 container with the legacy V4L2 camera HAL injected.
+#
+# No image rebuild is required, but this does NOT use `-v` for new files:
+# Docker creates a directory when a bind-mount target does not exist, which
+# silently breaks HAL/rc/VINTF injection. Instead we `docker create` the
+# container, `docker cp` the files into it, and then `docker start`.
 set -euo pipefail
 
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-android12_dir="$repo_dir"
-vendor="$android12_dir/vendor"
-files="$android12_dir/files"
+vendor="$repo_dir/vendor"
+files="$repo_dir/files"
 
 BASE_IMAGE=${BASE_IMAGE:-redroid/redroid:12.0.0_64only-latest}
 VIDEO_DEV=${VIDEO_DEV:-/dev/video10}
@@ -21,63 +24,61 @@ die() { echo "error: $*" >&2; exit 1; }
 [[ -f "$vendor/lib64/hw/camera.v4l2.so" ]] || die "missing HAL: $vendor/lib64/hw/camera.v4l2.so (run ./build.sh)"
 [[ -f "$vendor/bin/hw/android.hardware.camera.provider@2.4-service_64" ]] || die "missing provider (run ./build.sh)"
 [[ -f "$vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc" ]] || die "missing provider rc (run ./build.sh)"
-[[ -e "$VIDEO_DEV" ]] || die "$VIDEO_DEV not found; load v4l2loopback or pass a USB camera"
-
-prop_dir="$vendor/prop"
-mkdir -p "$prop_dir"
-tmp_name="dk-cam-prop-$$"
-
-echo "Preparing ro.hardware.camera=v4l2 property files from $BASE_IMAGE"
-docker create --name "$tmp_name" "$BASE_IMAGE" >/dev/null
-cleanup() { docker rm -f "$tmp_name" >/dev/null 2>&1 || true; }
-trap cleanup EXIT
-
-for spec in "vendor:/vendor/build.prop:vendor-build.prop" "system:/system/build.prop:system-build.prop"; do
-  src=${spec%%:*}; rest=${spec#*:}; path=${rest%:*}; dst=${rest##*:}
-  # src is kept for readability of the spec, but only path/dst are used.
-  : "$src"
-  if docker cp "$tmp_name:$path" "$prop_dir/$dst" >/dev/null 2>&1; then
-    grep -q '^ro.hardware.camera=' "$prop_dir/$dst" || \
-      echo 'ro.hardware.camera=v4l2' >> "$prop_dir/$dst"
-    echo "  patched $path -> $prop_dir/$dst"
-  else
-    echo "  warning: $path not found in base image"
-  fi
-done
-cleanup
-trap - EXIT
-
-mounts=(
-  -v "$vendor/bin/hw/android.hardware.camera.provider@2.4-service_64:/vendor/bin/hw/android.hardware.camera.provider@2.4-service_64:ro"
-  -v "$vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc:/vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc:ro"
-  -v "$files/camera-ns-fix.rc:/vendor/etc/init/camera-ns-fix.rc:ro"
-  -v "$files/manifest-camera.xml:/vendor/etc/vintf/manifest/manifest-camera.xml:ro"
-)
-# Mount the HAL and its provider/device impl libraries one file at a time. Do not
-# mount all of /vendor/lib64: that would hide the base image's graphics/audio libs.
-while IFS= read -r f; do
-  [[ -n "$f" ]] || continue
-  mounts+=(-v "$f:/vendor/lib64/$(basename "$f"):ro")
-done < <(find "$vendor/lib64" -maxdepth 1 -type f -name '*.so' 2>/dev/null | sort)
-while IFS= read -r f; do
-  [[ -n "$f" ]] || continue
-  mounts+=(-v "$f:/vendor/lib64/hw/$(basename "$f"):ro")
-done < <(find "$vendor/lib64/hw" -maxdepth 1 -type f -name '*.so' 2>/dev/null | sort)
-[[ -f "$prop_dir/vendor-build.prop" ]] && mounts+=(-v "$prop_dir/vendor-build.prop:/vendor/build.prop:ro")
-[[ -f "$prop_dir/system-build.prop" ]] && mounts+=(-v "$prop_dir/system-build.prop:/system/build.prop:ro")
+[[ -e "$VIDEO_DEV" ]] || die "$VIDEO_DEV not found; load v4l2loopback and start the feed first"
 
 docker rm -f "$NAME" >/dev/null 2>&1 || true
-
-echo "Starting $NAME ($BASE_IMAGE), $VIDEO_DEV -> /dev/video0"
-docker run -itd --privileged \
-  --name "$NAME" \
+echo "Creating $NAME ($BASE_IMAGE), $VIDEO_DEV -> /dev/video0"
+docker create --name "$NAME" --privileged \
   --device "$VIDEO_DEV:/dev/video0" \
-  "${mounts[@]}" \
   -p "$PORT:5555" \
   "$BASE_IMAGE" \
   "androidboot.redroid_width=$WIDTH" \
   "androidboot.redroid_height=$HEIGHT" \
   "androidboot.redroid_dpi=$DPI" >/dev/null
+
+cleanup() { docker rm -f "$NAME" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+
+copy() {
+  local src=$1 dst=$2
+  [[ -e "$src" ]] || die "missing source: $src"
+  docker cp "$src" "$NAME:$dst"
+}
+
+# HAL + provider/device impl libraries
+for f in "$vendor"/lib64/hw/*.so; do
+  [[ -e "$f" ]] || continue
+  copy "$f" "/vendor/lib64/hw/$(basename "$f")"
+done
+for f in "$vendor"/lib64/*.so; do
+  [[ -e "$f" ]] || continue
+  copy "$f" "/vendor/lib64/$(basename "$f")"
+done
+
+# provider, rc, linker workaround, VINTF fragment
+copy "$vendor/bin/hw/android.hardware.camera.provider@2.4-service_64" \
+  "/vendor/bin/hw/android.hardware.camera.provider@2.4-service_64"
+copy "$vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc" \
+  "/vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc"
+copy "$files/camera-ns-fix.rc" "/vendor/etc/init/camera-ns-fix.rc"
+copy "$files/manifest-camera.xml" "/vendor/etc/vintf/manifest/manifest-camera.xml"
+
+# ro.hardware.camera must be set from /vendor/build.prop before boot.
+# /vendor/build.prop is a regular file in redroid 12 and is loaded after
+# /system/build.prop, so it is the safest place to set the property.
+prop_tmp=$(mktemp)
+docker cp "$NAME:/vendor/build.prop" "$prop_tmp" >/dev/null 2>&1 || \
+  die "cannot read /vendor/build.prop from $BASE_IMAGE"
+if grep -q '^ro.hardware.camera=' "$prop_tmp"; then
+  sed -i 's/^ro.hardware.camera=.*/ro.hardware.camera=v4l2/' "$prop_tmp"
+else
+  echo 'ro.hardware.camera=v4l2' >> "$prop_tmp"
+fi
+docker cp "$prop_tmp" "$NAME:/vendor/build.prop"
+rm -f "$prop_tmp"
+
+docker start "$NAME" >/dev/null
+trap - EXIT
 
 cat <<EOF
 

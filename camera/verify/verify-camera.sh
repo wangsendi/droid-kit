@@ -2,29 +2,48 @@
 # Verify that Android sees the camera and that the browser-facing metadata is sane.
 set -euo pipefail
 
-HOST_IP=${HOST_IP:-127.0.0.1}
 ADB=${ADB:-adb}
+HOST_IP=${HOST_IP:-127.0.0.1}
 PORT=${PORT:-5555}
 TARGET=${TARGET:-$HOST_IP:$PORT}
 SERIAL=${SERIAL:-$TARGET}
 
 "$ADB" connect "$TARGET" >/dev/null 2>&1 || true
-adb_cmd=("$ADB" -s "$SERIAL")
+if ! timeout 60 "$ADB" -s "$SERIAL" wait-for-device >/dev/null 2>&1; then
+  echo "error: $SERIAL not ready (adb connect failed or boot incomplete)" >&2
+  exit 1
+fi
 
 echo "=== props ==="
-"${adb_cmd[@]}" shell 'getprop ro.build.version.release; getprop ro.hardware.camera; getprop ro.hardware'
+"$ADB" -s "$SERIAL" shell 'getprop ro.build.version.release; getprop ro.hardware.camera; getprop ro.hardware'
 
 echo "=== video node ==="
-"${adb_cmd[@]}" shell 'ls -l /dev/video* 2>&1'
+"$ADB" -s "$SERIAL" shell 'ls -l /dev/video* 2>&1'
 
 echo "=== camera provider ==="
-"${adb_cmd[@]}" shell 'lshal | grep -i camera || true'
+provider_out=$("$ADB" -s "$SERIAL" shell 'lshal | grep -i camera || true')
+echo "$provider_out"
 
 echo "=== camera service ==="
-"${adb_cmd[@]}" shell 'dumpsys media.camera 2>/dev/null | head -30'
+camera_out=$("$ADB" -s "$SERIAL" shell 'dumpsys media.camera 2>/dev/null | head -30')
+echo "$camera_out"
 
 echo "=== recent camera/linker logs ==="
-"${adb_cmd[@]}" shell 'logcat -d 2>/dev/null | grep -iE "camera|v4l2|linker" | tail -60' || true
+"$ADB" -s "$SERIAL" shell 'logcat -d 2>/dev/null | grep -iE "camera|v4l2|linker" | tail -60' || true
+
+status=0
+if ! grep -q 'Number of camera devices: [1-9]' <<<"$camera_out"; then
+  echo "FAIL: no camera device enumerated" >&2
+  status=1
+fi
+if ! grep -qE 'ICameraProvider/(legacy|external)/0' <<<"$provider_out"; then
+  echo "FAIL: camera provider not registered (expected legacy/0)" >&2
+  status=1
+fi
+if ! "$ADB" -s "$SERIAL" shell 'getprop ro.hardware.camera' | grep -qx 'v4l2'; then
+  echo "FAIL: ro.hardware.camera is not v4l2" >&2
+  status=1
+fi
 
 cat <<'EOF'
 
@@ -35,3 +54,5 @@ Browser check (Chrome/WebView):
     console.log(t.label, t.getCapabilities(), t.getSettings());
   })
 EOF
+
+exit "$status"

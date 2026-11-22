@@ -217,7 +217,7 @@ cd camera/android12
 ./setup-aosp.sh
 ./build.sh
 
-# 3. 启动 Android 12 容器（bind-mount，不重打包）
+# 3. 启动 Android 12 容器（docker cp 注入，不重打包）
 ./run.sh
 
 # 4. 验证

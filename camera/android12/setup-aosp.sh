@@ -31,12 +31,21 @@ else
   echo "Reusing existing repo at $AOSP_DIR"
 fi
 
-# noto-fonts is large and not needed for the camera HAL/provider build.
+# Large projects not needed for the two camera modules.
 mkdir -p .repo/local_manifests
-cat > .repo/local_manifests/remove-noto.xml <<'XML'
+cat > .repo/local_manifests/remove-heavy.xml <<'XML'
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
   <remove-project name="platform/external/noto-fonts" />
+  <remove-project name="platform/external/openscreen" />
+  <remove-project name="platform/cts" />
+  <remove-project name="platform/packages/apps/TV" />
+  <remove-project name="platform/packages/modules/ArtPrebuilt" />
+  <remove-project name="platform/packages/modules/BootPrebuilt/5.4/arm64" />
+  <remove-project name="platform/prebuilts/clang/host/darwin-x86" />
+  <remove-project name="platform/device/google/barbet-kernel" />
+  <remove-project name="platform/device/google/coral-kernel" />
+  <remove-project name="platform/device/google/crosshatch-kernel" />
 </manifest>
 XML
 

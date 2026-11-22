@@ -4,8 +4,8 @@ These patches apply to the `hardware/libhardware` project of an AOSP 12 tree:
 
 ```bash
 cd "$AOSP_DIR/hardware/libhardware"
-git apply /path/to/0001-v4l2-report-back-camera.patch
-git apply /path/to/0002-v4l2-hal-name.patch
+git apply -p3 /path/to/0001-v4l2-report-back-camera.patch
+git apply -p3 /path/to/0002-v4l2-hal-name.patch
 ```
 
 What they change:

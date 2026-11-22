@@ -28,7 +28,7 @@ cd camera/android12
 ./setup-aosp.sh
 ```
 
-Default tree: `/app/data/aosp12`, branch `android-12.0.0_r34`, USTC mirror.
+Default tree: `/app/data/aosp12`, branch `android-12.0.0_r34`, googlesource mirror.
 This downloads tens of GB.
 
 ## 2. Build HAL + provider
@@ -42,6 +42,28 @@ If the host is not suitable for AOSP 12 builds:
 ```bash
 docker build -t droid-kit-aosp12-builder -f Dockerfile.builder .
 BUILD_IN_DOCKER=1 ./build.sh
+```
+
+When the Docker daemon cannot see `$AOSP_DIR` (for example, a dev container
+path such as `/app/data/aosp12`), also set the host-visible paths:
+
+```bash
+HOST_AOSP_DIR=/data/project/droid-kit/aosp12 \
+HOST_CAMERA_DIR=/data/project/droid-kit/workspace/droid-kit/camera/android12 \
+BUILD_IN_DOCKER=1 ./build.sh
+```
+
+For a long build that should survive agent/server restarts, use the detached
+container script. The two `-v` sources must be paths the Docker daemon can see
+(on this host that is `/data/project/droid-kit/...`, not the dev-container
+`/app/data/...`):
+
+```bash
+docker run -d --name droid-kit-aosp-build \
+  -v /data/project/droid-kit/aosp12:/aosp \
+  -v /data/project/droid-kit/workspace/droid-kit/camera/android12:/camera \
+  ubuntu:20.04 bash /camera/container-build.sh
+docker logs -f droid-kit-aosp-build
 ```
 
 If you already have matching prebuilt artifacts, put them in `prebuilt/` and use:
@@ -83,8 +105,10 @@ logcat.
 ./run.sh
 ```
 
-This starts `droid-kit-12-cam`, bind-mounting the HAL/provider/rc/manifest and
-a patched `build.prop` with `ro.hardware.camera=v4l2`.
+This starts `droid-kit-12-cam`, injecting the HAL/provider/rc/manifest using
+`docker create` + `docker cp` (not `-v`: Docker would create directories for
+new container paths) and patching `/vendor/build.prop` with
+`ro.hardware.camera=v4l2`.
 
 ## 5. Verify
 

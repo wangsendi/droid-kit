@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bc bison build-essential ccache flex g++-multilib gcc-multilib \
     gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev \
     libelf-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
+    libc6-dev-i386 x11proto-core-dev libx11-dev libgl1-mesa-dev fontconfig \
     libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool \
     squashfs-tools xsltproc zip zlib1g-dev \
     file unzip wget cpio \

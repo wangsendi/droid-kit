@@ -18,8 +18,9 @@
 
 因此方案中的“从官方镜像抠出原版 HAL”这一步无法直接执行。本仓库的做法是：
 
-> 从 AOSP 12 源码编译 `camera.v4l2.so` 和 HIDL 2.4 provider，然后再按原方案
-> 做 bind-mount 注入。
+> 从 AOSP 12 源码编译 `camera.v4l2.so` 和 HIDL 2.4 provider，然后再用
+> `docker cp` 注入。不要用 `-v` 挂新文件：Docker 会把不存在的容器目标创建成
+> 目录，HAL/rc/VINTF 会静默失效。
 
 ## 1. 架构
 
@@ -107,29 +108,42 @@ cd camera/android12
 
 `run.sh` 会：
 
-1. 从 base image 取出 `/vendor/build.prop` 和 `/system/build.prop`；
-2. 追加 `ro.hardware.camera=v4l2`；
-3. 启动 `droid-kit-12-cam`；
-4. bind-mount HAL、provider、provider rc、linker fix、VINTF fragment、prop。
+1. `docker create` 容器（带 `--device /dev/video10:/dev/video0`）；
+2. `docker cp` 注入 HAL、provider、provider/device impl 库、provider rc、
+   linker fix、VINTF fragment；
+3. 从容器里取出 `/vendor/build.prop`，追加/替换
+   `ro.hardware.camera=v4l2`，再 `docker cp` 回去；
+4. `docker start`。
 
-对应 Docker 参数：
+等价的核心操作：
 
 ```bash
-docker run -itd --privileged \
-  --name droid-kit-12-cam \
-  --device /dev/video10:/dev/video0 \
-  -v $PWD/vendor/lib64/hw/camera.v4l2.so:/vendor/lib64/hw/camera.v4l2.so:ro \
-  -v $PWD/vendor/bin/hw/android.hardware.camera.provider@2.4-service_64:/vendor/bin/hw/android.hardware.camera.provider@2.4-service_64:ro \
-  -v $PWD/vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc:/vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc:ro \
-  -v $PWD/files/camera-ns-fix.rc:/vendor/etc/init/camera-ns-fix.rc:ro \
-  -v $PWD/files/manifest-camera.xml:/vendor/etc/vintf/manifest/manifest-camera.xml:ro \
-  -v $PWD/vendor/prop/vendor-build.prop:/vendor/build.prop:ro \
-  -p 5555:5555 \
+docker create --name droid-kit-12-cam --privileged \
+  --device /dev/video10:/dev/video0 -p 5555:5555 \
   redroid/redroid:12.0.0_64only-latest \
   androidboot.redroid_width=1080 \
   androidboot.redroid_height=1920 \
   androidboot.redroid_dpi=480
+
+docker cp vendor/lib64/hw/camera.v4l2.so \
+  droid-kit-12-cam:/vendor/lib64/hw/camera.v4l2.so
+docker cp vendor/bin/hw/android.hardware.camera.provider@2.4-service_64 \
+  droid-kit-12-cam:/vendor/bin/hw/android.hardware.camera.provider@2.4-service_64
+docker cp vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc \
+  droid-kit-12-cam:/vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc
+docker cp files/camera-ns-fix.rc droid-kit-12-cam:/vendor/etc/init/camera-ns-fix.rc
+docker cp files/manifest-camera.xml \
+  droid-kit-12-cam:/vendor/etc/vintf/manifest/manifest-camera.xml
+# build.prop: 取出、改、放回
+docker cp droid-kit-12-cam:/vendor/build.prop /tmp/vendor-build.prop
+echo 'ro.hardware.camera=v4l2' >> /tmp/vendor-build.prop
+docker cp /tmp/vendor-build.prop droid-kit-12-cam:/vendor/build.prop
+
+docker start droid-kit-12-cam
 ```
+
+> 不要用 `-v $PWD/vendor/...:/vendor/...`。目标文件在基础镜像里不存在时，
+> Docker 会把容器目标创建成**目录**，init 无法解析 rc，VINTF 也看不到 fragment。
 
 ## 5. 验证
 
@@ -179,9 +193,9 @@ navigator.mediaDevices.getUserMedia({video: true}).then((s) => {
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `Could not load camera HAL module: -2` | HAL 不在 `/vendor/lib64/hw` | 确认 bind mount 路径 |
+| `Could not load camera HAL module: -2` | HAL 不在 `/vendor/lib64/hw` | 确认 `docker cp` 路径 |
 | provider 没起来 | VINTF 未声明 `legacy/0` | 检查 `/vendor/etc/vintf/manifest/manifest-camera.xml` |
-| 0 个设备 | `ro.hardware.camera` 没生效 | 检查 `getprop ro.hardware.camera`；确认 build.prop bind mount |
+| 0 个设备 | `ro.hardware.camera` 没生效 | 检查 `getprop ro.hardware.camera`；确认 `/vendor/build.prop` 已改 |
 | provider 崩溃/找不到 libcamera_client | linker namespace | 检查 `camera-ns-fix.rc` 是否执行；`ld.config.txt` 是否包含 `/system/lib64` |
 | 有设备但黑屏 | gralloc/格式不兼容 | 换 `PIX_FMT=yuyv422` 或改 HAL 格式转换；这是最难的一层 |
 | 浏览器 label 仍异常 | HAL metadata 不够 | 确认补丁已生效（`LENS_FACING_BACK`），camera id 为 0 |
@@ -212,7 +226,7 @@ adb logcat -d | grep -iE 'gralloc|GraphicBuffer|lock_ycbcr|formatConvert'
 这说明问题在 gralloc，不在 VINTF/HAL 加载。可选处理：
 
 1. 用 droidpool 的 gralloc camera 补丁适配 Redroid 12 的
-   `vendor/redroid/gralloc`，重新编 `gralloc.redroid.so` 并 bind-mount；
+   `vendor/redroid/gralloc`，重新编 `gralloc.redroid.so` 并注入；
 2. 或改用 Android 13 external camera provider 路线（它同样需要 gralloc 补丁，
    但 AOSP 13 的路径和社区补丁更成熟）；
 3. 或直接用真机。

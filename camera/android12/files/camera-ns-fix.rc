@@ -1,14 +1,18 @@
-# droid-kit: allow the vendor camera provider to load the system-built
-# camera.v4l2.so and its platform dependencies from /system/lib64.
+# droid-kit: allow the vendor camera provider to resolve system libraries used
+# by the legacy camera.v4l2 HAL.
 #
-# This is a workaround for the legacy V4L2 HAL, which was designed before
-# Treble and links against libcamera_client from the system partition.
+# The provider service itself is a vendor process. Its passthrough loader
+# (android_load_sphal_library) uses the "sphal" namespace, which does not
+# include /system/lib64 by default. The HAL links libcamera_client.so and
+# libcamera_metadata.so from the system partition, so append /system/lib64 to
+# the sphal search/permitted paths and restart the provider.
 #
-# Android 12 puts the generated linker config in one of these locations
-# depending on the build; patch whichever exists.
+# The live file is /linkerconfig/ld.config.txt. /linkerconfig/default is hidden
+# by the linkerconfig bind mount on Android 12.
 #
 # Verify after boot:
-#   adb shell 'grep -n "namespace.default" /linkerconfig/default/ld.config.txt'
-#   adb logcat -d | grep -iE 'camera|linker'
-on property:apexd.status=activated
-    exec -- /system/bin/sh -c "f=/linkerconfig/default/ld.config.txt; [ -f $f ] || f=/linkerconfig/ld.config.txt; [ -f $f ] && sed -i 's|namespace.default.search.paths = /vendor/|namespace.default.search.paths = /system/lib64:/vendor/|g; s|namespace.default.permitted.paths = /vendor/|namespace.default.permitted.paths = /system/lib64:/vendor/|g' $f"
+#   adb shell 'grep -n "namespace.sphal" /linkerconfig/ld.config.txt | head'
+#   adb shell 'lshal | grep -i camera'
+on property:sys.boot_completed=1
+    exec -- /system/bin/sh -c "f=/linkerconfig/ld.config.txt; [ -f $f ] && sed -i '/^[[:space:]]*namespace.sphal.search.paths/ a namespace.sphal.search.paths += /system/lib64' $f; [ -f $f ] && sed -i '/^[[:space:]]*namespace.sphal.permitted.paths/ a namespace.sphal.permitted.paths += /system/lib64' $f"
+    restart vendor.camera-provider-2-4
