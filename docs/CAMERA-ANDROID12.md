@@ -48,6 +48,9 @@ cd camera/android12
 ./build.sh               # 应用补丁并编译
 ```
 
+> 在当前 Docker/overlayfs 环境里，非 privileged 容器解包 `libc6` 可能卡死。
+> 长构建请用下面的 detached + `--privileged` 容器；普通 Linux 主机不受影响。
+
 如果宿主机不适合直接编译 AOSP 12：
 
 ```bash

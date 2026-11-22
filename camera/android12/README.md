@@ -54,9 +54,10 @@ BUILD_IN_DOCKER=1 ./build.sh
 ```
 
 For a long build that should survive agent/server restarts, use the detached
-container script. The two `-v` sources must be paths the Docker daemon can see
-(on this host that is `/data/project/droid-kit/...`, not the dev-container
-`/app/data/...`):
+container script. It must be `--privileged`: on this Docker/overlayfs host an
+unprivileged `dpkg` can deadlock while unpacking `libc6`. The two `-v` sources
+must be paths the Docker daemon can see (on this host that is
+`/data/project/droid-kit/...`, not the dev-container `/app/data/...`):
 
 ```bash
 docker run -d --privileged --name droid-kit-aosp-build \
