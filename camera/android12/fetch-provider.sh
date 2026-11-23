@@ -77,7 +77,8 @@ if ! mount -o loop,ro "$work/vendor-part.img" "$mnt" 2>/dev/null; then
       awk -F/ '/^\/[0-9]+$/ { next } { print $6 }' |
       while read -r name; do
         case "$name" in
-          android.hardware.camera.*.so|camera.device@*-impl.so|libtinyxml2.so)
+          android.hardware.camera.*.so|camera.device@*-impl.so|\
+          android.hidl.allocator@1.0.so|libtinyxml2.so)
             extract "$dir/$name" "$OUT/$dir/$name" ;;
         esac
       done
@@ -92,6 +93,7 @@ else
     "$OUT/lib64/hw/android.hardware.camera.provider@2.4-impl.so"
   for f in "$src"/lib64/android.hardware.camera.*.so \
            "$src"/lib64/camera.device@*-impl.so \
+           "$src"/lib64/android.hidl.allocator@1.0.so \
            "$src"/lib64/libtinyxml2.so; do
     [[ -e "$f" ]] && install -m 0644 "$f" "$OUT/lib64/$(basename "$f")"
   done
