@@ -18,6 +18,9 @@ COPY camera/android12/files/manifest-camera.xml /staged/vendor/etc/vintf/manifes
 # linker namespace workaround for the legacy HAL
 COPY camera/android12/files/camera-ns-fix.rc /staged/vendor/etc/init/camera-ns-fix.rc
 
+# Camera1 shim needs video encoder caps to pick a preview size
+COPY camera/android12/files/media_profiles_V1_0.xml /staged/system/etc/media_profiles_V1_0.xml
+
 # Take the base build.prop files and add ro.hardware.camera before boot.
 COPY --from=base /vendor/build.prop /staged/vendor/build.prop
 COPY --from=base /system/build.prop /staged/system/build.prop
@@ -25,6 +28,7 @@ COPY --from=base /system/build.prop /staged/system/build.prop
 RUN set -e; \
     chmod 0755 /staged/vendor/bin/hw/android.hardware.camera.provider@2.4-service_64; \
     chmod 0644 /staged/vendor/lib64/hw/camera.v4l2.so; \
+    chmod 0644 /staged/vendor/lib64/hw/gralloc.v4l2.so; \
     chmod 0644 /staged/vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc; \
     chmod 0644 /staged/vendor/etc/init/camera-ns-fix.rc; \
     for f in /staged/vendor/build.prop /staged/system/build.prop; do \
@@ -34,6 +38,9 @@ RUN set -e; \
       fi; \
       if ! grep -q '^ro.hardware.camera=' "$f"; then \
         echo 'ro.hardware.camera=v4l2' >> "$f"; \
+      fi; \
+      if ! grep -q '^ro.hardware.gralloc=' "$f"; then \
+        echo 'ro.hardware.gralloc=v4l2' >> "$f"; \
       fi; \
     done
 

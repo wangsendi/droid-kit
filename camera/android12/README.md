@@ -55,6 +55,22 @@ Prerequisites (see `docs/CAMERA-ANDROID12.md`):
 `vendor/lib64/hw/`. The provider binaries in `vendor/` are not rebuilt (they
 come from the emulator image; see the doc).
 
+## Baked image (optional)
+
+```bash
+cd ../..   # repo root
+docker build -f Dockerfile.android12-camera -t droid-kit:12-camera .
+docker create --name droid-kit-12-img --privileged \
+  --device /dev/video10:/dev/video0 -p 5558:5555 droid-kit:12-camera \
+  androidboot.redroid_width=1080 androidboot.redroid_height=1920 \
+  androidboot.redroid_dpi=480
+docker start droid-kit-12-img
+```
+
+The image contains the same HAL/gralloc/provider/rc/media profiles and the
+`ro.hardware.camera=v4l2` / `ro.hardware.gralloc=v4l2` properties. Verified:
+1 camera device, facing Back, WebView label `camera2 0, facing back`.
+
 ## Host video source
 
 ```bash

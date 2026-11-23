@@ -268,3 +268,28 @@ API2 camera characteristics:
   忽略，约 2.4 MB）。它们不是本机 AOSP 构建产物。
 - 运行脚本：`run.sh` + `files/`（rc、VINTF、media profiles）。
 - 验证：`camera/verify/verify-camera.sh` 和 `camera/verify/camtest/`。
+
+## 8. 预构建镜像（可选）
+
+除运行期注入外，仓库还提供把上述文件直接烘进镜像的变体：
+
+```bash
+cd /path/to/droid-kit
+docker build -f Dockerfile.android12-camera -t droid-kit:12-camera .
+docker create --name droid-kit-12-img --privileged \
+  --device /dev/video10:/dev/video0 -p 5558:5555 \
+  droid-kit:12-camera \
+  androidboot.redroid_width=1080 \
+  androidboot.redroid_height=1920 \
+  androidboot.redroid_dpi=480
+docker start droid-kit-12-img
+```
+
+该镜像包含 HAL、YUV gralloc、provider/impl、rc、VINTF、media profiles，以及
+`ro.hardware.camera=v4l2` / `ro.hardware.gralloc=v4l2`。
+
+已实测：`dumpsys media.camera` 为 1 台设备、`Facing: Back`；WebView
+`getUserMedia` 得到 `camera2 0, facing back` 和 1280x720 帧。
+
+> 这个变体会在 Redroid 12 之上增加一层很小的文件层；如果坚持“完全不重打包”，
+> 用 `run.sh` 的运行期注入方式即可，两者产物一致。
