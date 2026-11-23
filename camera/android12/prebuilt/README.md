@@ -6,8 +6,12 @@ If you already have a 64-bit Android 12 `camera.v4l2.so` and the matching
 ```text
 camera/android12/prebuilt/
 ├── lib64/hw/camera.v4l2.so
-├── lib64/hw/camera.device@*.so
+├── lib64/hw/gralloc.v4l2.so
+├── lib64/hw/android.hardware.camera.provider@2.4-impl.so
+├── lib64/camera.device@*-impl.so
 ├── lib64/android.hardware.camera.*.so
+├── lib64/android.hidl.allocator@1.0.so
+├── lib64/libtinyxml2.so
 ├── bin/hw/android.hardware.camera.provider@2.4-service_64
 └── etc/init/android.hardware.camera.provider@2.4-service_64.rc
 ```
