@@ -75,9 +75,18 @@ vendor/lib64/camera.device@{1.0,3.2,3.3,3.4,3.4-external,3.5,3.5-external,
 vendor/lib64/libtinyxml2.so
 ```
 
-这些文件已经放在 `camera/android12/vendor/`（`.gitignore` 忽略，见
-`docs/CAMERA-ANDROID12.md` 的“可复现”一节）。provider 是 Android 12 的
-vendor 二进制，和 reDroid 12 的 system 库版本一致，可以直接运行。
+`fetch-provider.sh` 会自动下载/解包这个镜像并把这些文件放进
+`camera/android12/vendor/`：
+
+```bash
+cd camera/android12
+./fetch-provider.sh
+# 或使用已下载的镜像：
+SYSTEM_IMAGE_ZIP=/path/to/x86_64-31_r05.zip ./fetch-provider.sh
+```
+
+这些文件在 `.gitignore` 里（约 2.4 MB），不随仓库提交。provider 是 Android 12
+的 vendor 二进制，和 reDroid 12 的 system 库版本一致，可以直接运行。
 
 ### 2.2 HAL / gralloc：从 AOSP 12 源码手写编译
 
@@ -254,9 +263,8 @@ API2 camera characteristics:
 - 源码补丁：`camera/android12/patches/0001..0004`，`build.sh` 自动应用。
 - HAL/gralloc 编译：`build-v4l2.sh`、`build-gralloc.sh`（NDK r23c + reDroid 12
   导出的 `rd12libs`）。
-- provider 等预编译二进制：目前放在 `camera/android12/vendor/`（被
-  `.gitignore` 忽略，约 2.4 MB）。它们来自上文的
-  `x86_64-31_r05.zip`，不是本机 AOSP 构建产物；如需完全从零复现，按 2.1
-  解包该镜像即可。
+- provider 等预编译二进制：`./fetch-provider.sh` 从
+  `x86_64-31_r05.zip` 自动解包到 `camera/android12/vendor/`（被 `.gitignore`
+  忽略，约 2.4 MB）。它们不是本机 AOSP 构建产物。
 - 运行脚本：`run.sh` + `files/`（rc、VINTF、media profiles）。
 - 验证：`camera/verify/verify-camera.sh` 和 `camera/verify/camtest/`。

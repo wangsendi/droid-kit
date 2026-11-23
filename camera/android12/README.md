@@ -29,7 +29,7 @@ cameraserver (Camera2) → WebView getUserMedia
 |---|---|
 | `camera.v4l2.so` | AOSP 12 `hardware/libhardware/modules/camera/3_4`, patched and cross-compiled with NDK r23c (`build-v4l2.sh`) |
 | `gralloc.v4l2.so` | AOSP 12 `hardware/libhardware/modules/gralloc`, patched for YUV_420_888 + `lock_ycbcr` (`build-gralloc.sh`) |
-| provider 2.4 + impl libs | AOSP 12 x86_64 emulator image `x86_64-31_r05.zip` (vendor partition), already staged in `vendor/` |
+| provider 2.4 + impl libs | AOSP 12 x86_64 emulator image `x86_64-31_r05.zip` (vendor partition), fetched with `fetch-provider.sh` into `vendor/` |
 | `media_profiles_V1_0.xml` | generated from the AOSP goldfish config, shipped in `files/` |
 
 The official reDroid 12 image has no camera provider, no `camera.v4l2.so`, and
@@ -39,6 +39,7 @@ this directory.
 ## Build
 
 ```bash
+./fetch-provider.sh        # one-time: stage provider binaries from the emulator image
 ./build.sh                 # uses the running dk-build2 container if present
 BUILDER= ./build.sh        # or build on the host
 USE_PREBUILT=1 ./build.sh  # stage camera/android12/prebuilt/ instead
