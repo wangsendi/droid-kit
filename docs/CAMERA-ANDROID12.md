@@ -232,6 +232,10 @@ I CAMTEST : console: requestVideoFrameCallback count in 3s=30
 I CAMTEST : console: DONE
 ```
 
+相机 App 的拍照路径也已验证：点击快门后生成
+`/sdcard/Pictures/IMG_*.jpg`，`file` 显示为 1280x720 JPEG（HAL 的 BLOB
+输出经 ImageProcessor 编码），说明多 stream + JPEG 路径正常。
+
 `dumpsys media.camera` 同时显示：
 
 ```text
