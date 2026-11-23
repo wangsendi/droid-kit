@@ -11,7 +11,10 @@ function log(x){ console.log(typeof x === 'string' ? x : JSON.stringify(x)); }
     log('label=' + t.label);
     log('settings=' + JSON.stringify(t.getSettings()));
     log('capabilities=' + JSON.stringify(t.getCapabilities()));
-    const v = document.createElement('video'); v.srcObject = s; v.muted = true; await v.play();
+    const v = document.createElement('video'); v.srcObject = s; v.muted = true;
+    v.style.width = '160px'; v.style.height = '90px';
+    document.body.appendChild(v);
+    await v.play();
     const c = document.createElement('canvas'); c.width = 320; c.height = 240;
     const ctx = c.getContext('2d');
     let n = 0;
