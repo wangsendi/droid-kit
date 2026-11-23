@@ -93,7 +93,7 @@ index 99b7a935..846a0dcb 100644
  }
  
 diff --git a/hardware/libhardware/modules/camera/3_4/v4l2_wrapper.cpp b/hardware/libhardware/modules/camera/3_4/v4l2_wrapper.cpp
-index bee7855f..554f9dbe 100644
+index bee7855f..8afe40d6 100644
 --- a/hardware/libhardware/modules/camera/3_4/v4l2_wrapper.cpp
 +++ b/hardware/libhardware/modules/camera/3_4/v4l2_wrapper.cpp
 @@ -25,6 +25,7 @@
@@ -268,7 +268,7 @@ index bee7855f..554f9dbe 100644
 +  if (!captured_request) {
 +    // The stream may have been torn down while this buffer was still queued
 +    // in the driver (e.g. a flush/reconfigure race).  Drop the stale buffer.
-+    HAL_LOGW("DequeueRequest: buffer %u has no pending request.", buffer.index);
++    HAL_LOGV("DequeueRequest: buffer %u has no pending request.", buffer.index);
 +    request_context->active = false;
 +    return -EAGAIN;
 +  }

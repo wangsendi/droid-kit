@@ -27,7 +27,7 @@ function log(x){ console.log(typeof x === 'string' ? x : JSON.stringify(x)); }
     const iv = setInterval(() => {
       try {
         ctx.drawImage(v, 0, 0, 320, 240);
-        const d = ctx.getImageData(140, 100, 48, 48).data;
+        const d = ctx.getImageData(0, 0, 80, 40).data;
         let sum = 0, h = 0;
         for (let i = 0; i < d.length; i += 4) {
           sum += d[i] + d[i+1] + d[i+2];
