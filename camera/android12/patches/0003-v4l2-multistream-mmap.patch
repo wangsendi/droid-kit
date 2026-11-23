@@ -1,0 +1,414 @@
+diff --git a/modules/camera/3_4/v4l2_camera.cpp b/modules/camera/3_4/v4l2_camera.cpp
+index 99b7a935..846a0dcb 100644
+--- a/modules/camera/3_4/v4l2_camera.cpp
++++ b/modules/camera/3_4/v4l2_camera.cpp
+@@ -220,12 +220,12 @@ bool V4L2Camera::enqueueRequestBuffers() {
+   // settings are used for a buffer unless we were to enqueue them
+   // one at a time, which would be too slow.
+ 
+-  // Set the requested settings
++  // Set the requested settings.  Unsupported values are ignored: this is a
++  // best-effort virtual camera, and dropping a frame is worse than ignoring
++  // settings the device cannot apply (droid-kit).
+   int res = metadata_->SetRequestSettings(request->settings);
+   if (res) {
+-    HAL_LOGE("Failed to set settings.");
+-    completeRequest(request, res);
+-    return true;
++    HAL_LOGW("Failed to set some request settings (%d), continuing.", res);
+   }
+ 
+   // Replace the requested settings with a snapshot of
+@@ -328,30 +328,33 @@ int V4L2Camera::setupStreams(camera3_stream_configuration_t* stream_config) {
+   uint32_t width = stream->width;
+   uint32_t height = stream->height;
+ 
+-  if (stream_config->num_streams > 1) {
+-    // TODO(b/29939583):  V4L2 doesn't actually support more than 1
+-    // stream at a time. If not all streams are the same format
+-    // and size, error. Note that this means the HAL is not spec-compliant.
+-    // Technically, this error should be thrown during validation, but
+-    // since it isn't a spec-valid error validation isn't set up to check it.
+-    for (uint32_t i = 1; i < stream_config->num_streams; ++i) {
+-      stream = stream_config->streams[i];
+-      if (stream->format != format || stream->width != width ||
+-          stream->height != height) {
+-        HAL_LOGE(
+-            "V4L2 only supports 1 stream configuration at a time "
+-            "(stream 0 is format %d, width %u, height %u, "
+-            "stream %d is format %d, width %u, height %u).",
+-            format,
+-            width,
+-            height,
+-            i,
+-            stream->format,
+-            stream->width,
+-            stream->height);
+-        return -EINVAL;
++  // A V4L2 device can only capture one format/size at a time, while the
++  // framework may ask for several output streams (preview + JPEG + YUV
++  // callbacks).  Capture with a format the device really supports and convert
++  // the frame into every requested stream buffer on dequeue (droid-kit).
++  std::set<uint32_t> device_formats;
++  if (device_->GetFormats(&device_formats) == 0 && !device_formats.empty()) {
++    static const uint32_t kPreferredV4L2Formats[] = {
++        V4L2_PIX_FMT_YUYV, V4L2_PIX_FMT_YUV420,
++        V4L2_PIX_FMT_NV12, V4L2_PIX_FMT_NV21};
++    uint32_t chosen_format = 0;
++    for (uint32_t preferred : kPreferredV4L2Formats) {
++      if (device_formats.count(preferred)) {
++        chosen_format = preferred;
++        break;
+       }
+     }
++    if (chosen_format == 0) {
++      chosen_format = *device_formats.begin();
++    }
++    int chosen_hal_format = StreamFormat::V4L2ToHalPixelFormat(chosen_format);
++    if (chosen_hal_format > 0) {
++      format = chosen_hal_format;
++      HAL_LOGV("Capturing with V4L2 format 0x%x for %u stream(s).",
++               chosen_format, stream_config->num_streams);
++    } else {
++      HAL_LOGW("Device format 0x%x has no HAL equivalent.", chosen_format);
++    }
+   }
+ 
+   // Ensure the stream is off.
+@@ -416,11 +419,11 @@ int V4L2Camera::setupStreams(camera3_stream_configuration_t* stream_config) {
+ }
+ 
+ bool V4L2Camera::isValidRequestSettings(
+-    const android::CameraMetadata& settings) {
+-  if (!metadata_->IsValidRequest(settings)) {
+-    HAL_LOGE("Invalid request settings.");
+-    return false;
+-  }
++    const android::CameraMetadata& /*settings*/) {
++  // droid-kit: the framework adds mandatory per-request settings (target FPS
++  // range, crop region, ...) that this minimal HAL does not model.  The
++  // settings are applied on a best-effort basis in enqueueRequestBuffers, so
++  // do not reject the whole capture request here.
+   return true;
+ }
+ 
+diff --git a/modules/camera/3_4/v4l2_wrapper.cpp b/modules/camera/3_4/v4l2_wrapper.cpp
+index bee7855f..554f9dbe 100644
+--- a/modules/camera/3_4/v4l2_wrapper.cpp
++++ b/modules/camera/3_4/v4l2_wrapper.cpp
+@@ -25,6 +25,7 @@
+ 
+ #include <android-base/unique_fd.h>
+ #include <linux/videodev2.h>
++#include <sys/mman.h>
+ #include <sys/stat.h>
+ #include <sys/types.h>
+ #include "arc/cached_frame.h"
+@@ -114,12 +115,14 @@ void V4L2Wrapper::Disconnect() {
+     return;
+   }
+ 
+-  device_fd_.reset(-1);  // Includes close().
+-  format_.reset();
+   {
+     std::lock_guard<std::mutex> buffer_lock(buffer_queue_lock_);
++    UnmapBuffers();
+     buffers_.clear();
+   }
++  streaming_ = false;
++  device_fd_.reset(-1);  // Includes close().
++  format_.reset();
+ }
+ 
+ // Helper function. Should be used instead of ioctl throughout this class.
+@@ -141,11 +144,19 @@ int V4L2Wrapper::StreamOn() {
+     return -EINVAL;
+   }
+ 
++  if (streaming_) {
++    // v4l2loopback (and some other drivers) reject a second STREAMON with
++    // EBUSY, so make this idempotent (droid-kit).
++    HAL_LOGV("Stream already on.");
++    return 0;
++  }
++
+   int32_t type = format_->type();
+   if (IoctlLocked(VIDIOC_STREAMON, &type) < 0) {
+     HAL_LOGE("STREAMON fails (%d): %s", errno, strerror(errno));
+     return -ENODEV;
+   }
++  streaming_ = true;
+ 
+   HAL_LOGV("Stream turned on.");
+   return 0;
+@@ -159,7 +170,11 @@ int V4L2Wrapper::StreamOff() {
+   }
+ 
+   int32_t type = format_->type();
+-  int res = IoctlLocked(VIDIOC_STREAMOFF, &type);
++  int res = 0;
++  if (streaming_) {
++    res = IoctlLocked(VIDIOC_STREAMOFF, &type);
++    streaming_ = false;
++  }
+   // Calling STREAMOFF releases all queued buffers back to the user.
+   // No buffers in flight.
+   if (res < 0) {
+@@ -555,7 +570,20 @@ int V4L2Wrapper::SetFormat(const StreamFormat& desired_format,
+   return 0;
+ }
+ 
++void V4L2Wrapper::UnmapBuffers() {
++  for (size_t i = 0; i < mapped_buffers_.size(); ++i) {
++    if (mapped_buffers_[i] != nullptr) {
++      munmap(mapped_buffers_[i], mapped_lengths_[i]);
++    }
++  }
++  mapped_buffers_.clear();
++  mapped_lengths_.clear();
++}
++
+ int V4L2Wrapper::RequestBuffers(uint32_t num_requested) {
++  UnmapBuffers();
++  use_mmap_ = false;
++
+   v4l2_requestbuffers req_buffers;
+   memset(&req_buffers, 0, sizeof(req_buffers));
+   req_buffers.type = format_->type();
+@@ -565,8 +593,19 @@ int V4L2Wrapper::RequestBuffers(uint32_t num_requested) {
+   int res = IoctlLocked(VIDIOC_REQBUFS, &req_buffers);
+   // Calling REQBUFS releases all queued buffers back to the user.
+   if (res < 0) {
+-    HAL_LOGE("REQBUFS failed: %s", strerror(errno));
+-    return -ENODEV;
++    // Some drivers (notably v4l2loopback) only implement MMAP streaming.
++    HAL_LOGW("REQBUFS(USERPTR) failed: %s, retrying with MMAP.",
++             strerror(errno));
++    memset(&req_buffers, 0, sizeof(req_buffers));
++    req_buffers.type = format_->type();
++    req_buffers.memory = V4L2_MEMORY_MMAP;
++    req_buffers.count = num_requested;
++    res = IoctlLocked(VIDIOC_REQBUFS, &req_buffers);
++    if (res < 0) {
++      HAL_LOGE("REQBUFS failed: %s", strerror(errno));
++      return -ENODEV;
++    }
++    use_mmap_ = true;
+   }
+ 
+   // V4L2 will set req_buffers.count to a number of buffers it can handle.
+@@ -575,6 +614,29 @@ int V4L2Wrapper::RequestBuffers(uint32_t num_requested) {
+     return -ENODEV;
+   }
+   buffers_.resize(req_buffers.count);
++
++  if (use_mmap_) {
++    for (uint32_t i = 0; i < req_buffers.count; ++i) {
++      v4l2_buffer query;
++      memset(&query, 0, sizeof(query));
++      query.type = format_->type();
++      query.memory = V4L2_MEMORY_MMAP;
++      query.index = i;
++      if (IoctlLocked(VIDIOC_QUERYBUF, &query) < 0) {
++        HAL_LOGE("QUERYBUF failed: %s", strerror(errno));
++        return -ENODEV;
++      }
++      void* addr = mmap(nullptr, query.length, PROT_READ | PROT_WRITE,
++                        MAP_SHARED, device_fd_.get(), query.m.offset);
++      if (addr == MAP_FAILED) {
++        HAL_LOGE("mmap failed: %s", strerror(errno));
++        return -ENODEV;
++      }
++      mapped_buffers_.push_back(addr);
++      mapped_lengths_.push_back(query.length);
++      buffers_[i].camera_buffer->SetDataSize(query.length);
++    }
++  }
+   return 0;
+ }
+ 
+@@ -610,6 +672,8 @@ int V4L2Wrapper::EnqueueRequest(
+   memset(&device_buffer, 0, sizeof(device_buffer));
+   device_buffer.type = format_->type();
+   device_buffer.index = index;
++  device_buffer.memory =
++      use_mmap_ ? V4L2_MEMORY_MMAP : V4L2_MEMORY_USERPTR;
+ 
+   // Use QUERYBUF to ensure our buffer/device is in good shape,
+   // and fill out remaining fields.
+@@ -635,7 +699,13 @@ int V4L2Wrapper::EnqueueRequest(
+     request_context->request = request;
+     data = request_context->camera_buffer->GetData();
+   }
+-  device_buffer.m.userptr = reinterpret_cast<unsigned long>(data);
++  if (use_mmap_) {
++    // The device fills the MMAP'ed buffer; DequeueRequest copies it into
++    // camera_buffer for conversion (droid-kit).
++    device_buffer.length = mapped_lengths_[index];
++  } else {
++    device_buffer.m.userptr = reinterpret_cast<unsigned long>(data);
++  }
+ 
+   // Pass the buffer to the camera.
+   if (IoctlLocked(VIDIOC_QBUF, &device_buffer) < 0) {
+@@ -661,7 +731,7 @@ int V4L2Wrapper::DequeueRequest(std::shared_ptr<CaptureRequest>* request) {
+   v4l2_buffer buffer;
+   memset(&buffer, 0, sizeof(buffer));
+   buffer.type = format_->type();
+-  buffer.memory = V4L2_MEMORY_USERPTR;
++  buffer.memory = use_mmap_ ? V4L2_MEMORY_MMAP : V4L2_MEMORY_USERPTR;
+   int res = IoctlLocked(VIDIOC_DQBUF, &buffer);
+   if (res) {
+     if (errno == EAGAIN) {
+@@ -676,50 +746,88 @@ int V4L2Wrapper::DequeueRequest(std::shared_ptr<CaptureRequest>* request) {
+ 
+   std::lock_guard<std::mutex> guard(buffer_queue_lock_);
+   RequestContext* request_context = &buffers_[buffer.index];
++  std::shared_ptr<default_camera_hal::CaptureRequest> captured_request = request_context->request;
++  if (!captured_request) {
++    // The stream may have been torn down while this buffer was still queued
++    // in the driver (e.g. a flush/reconfigure race).  Drop the stale buffer.
++    HAL_LOGW("DequeueRequest: buffer %u has no pending request.", buffer.index);
++    request_context->active = false;
++    return -EAGAIN;
++  }
+ 
+-  // Lock the camera stream buffer for painting.
+-  const camera3_stream_buffer_t* stream_buffer =
+-      &request_context->request->output_buffers[0];
+-  uint32_t fourcc =
+-      StreamFormat::HalToV4L2PixelFormat(stream_buffer->stream->format);
++  if (use_mmap_ && buffer.index < mapped_buffers_.size()) {
++    size_t copy_size = mapped_lengths_[buffer.index];
++    if (copy_size > request_context->camera_buffer->GetBufferSize()) {
++      copy_size = request_context->camera_buffer->GetBufferSize();
++    }
++    request_context->camera_buffer->SetDataSize(copy_size);
++    memcpy(request_context->camera_buffer->GetData(),
++           mapped_buffers_[buffer.index], copy_size);
++  }
+ 
+   if (request) {
+-    *request = request_context->request;
+-  }
+-
+-  // Note that the device buffer length is passed to the output frame. If the
+-  // GrallocFrameBuffer does not have support for the transformation to
+-  // |fourcc|, it will assume that the amount of data to lock is based on
+-  // |buffer.length|, otherwise it will use the ImageProcessor::ConvertedSize.
+-  arc::GrallocFrameBuffer output_frame(
+-      *stream_buffer->buffer, stream_buffer->stream->width,
+-      stream_buffer->stream->height, fourcc, buffer.length,
+-      stream_buffer->stream->usage);
+-  res = output_frame.Map();
+-  if (res) {
+-    HAL_LOGE("Failed to map output frame.");
+-    request_context->request.reset();
+-    return -EINVAL;
++    *request = captured_request;
+   }
+-  if (request_context->camera_buffer->GetFourcc() == fourcc &&
+-      request_context->camera_buffer->GetWidth() ==
+-          stream_buffer->stream->width &&
+-      request_context->camera_buffer->GetHeight() ==
+-          stream_buffer->stream->height) {
+-    // If no format conversion needs to be applied, directly copy the data over.
+-    memcpy(output_frame.GetData(), request_context->camera_buffer->GetData(),
+-           request_context->camera_buffer->GetDataSize());
+-  } else {
+-    // Perform the format conversion.
+-    arc::CachedFrame cached_frame;
+-    cached_frame.SetSource(request_context->camera_buffer.get(), 0);
+-    cached_frame.Convert(request_context->request->settings, &output_frame);
++
++  // Paint every output stream of this request.  The V4L2 device only produces
++  // one frame format, so each stream buffer gets a (possibly converted) copy
++  // (droid-kit).
++  for (const camera3_stream_buffer_t& stream_buffer :
++       captured_request->output_buffers) {
++    if (stream_buffer.buffer == nullptr || stream_buffer.stream == nullptr) {
++      continue;
++    }
++    int fourcc =
++        StreamFormat::HalToV4L2PixelFormat(stream_buffer.stream->format);
++    if (fourcc <= 0) {
++      HAL_LOGE("No V4L2 format for HAL stream format 0x%x.",
++               stream_buffer.stream->format);
++      res = -EINVAL;
++      break;
++    }
++
++    // Note that the device buffer length is passed to the output frame. If the
++    // GrallocFrameBuffer does not have support for the transformation to
++    // |fourcc|, it will assume that the amount of data to lock is based on
++    // |buffer.length|, otherwise it will use the ImageProcessor::ConvertedSize.
++    arc::GrallocFrameBuffer output_frame(
++        *stream_buffer.buffer, stream_buffer.stream->width,
++        stream_buffer.stream->height, fourcc, buffer.length,
++        stream_buffer.stream->usage);
++    res = output_frame.Map();
++    if (res) {
++      HAL_LOGE("Failed to map output frame.");
++      res = -EINVAL;
++      break;
++    }
++    if (request_context->camera_buffer->GetFourcc() == fourcc &&
++        request_context->camera_buffer->GetWidth() ==
++            stream_buffer.stream->width &&
++        request_context->camera_buffer->GetHeight() ==
++            stream_buffer.stream->height) {
++      // If no format conversion needs to be applied, directly copy the data
++      // over.
++      memcpy(output_frame.GetData(), request_context->camera_buffer->GetData(),
++             request_context->camera_buffer->GetDataSize());
++    } else {
++      // Perform the format conversion.
++      arc::CachedFrame cached_frame;
++      if (cached_frame.SetSource(request_context->camera_buffer.get(), 0) ||
++          cached_frame.Convert(captured_request->settings, &output_frame)) {
++        HAL_LOGE("Failed to convert frame for stream format 0x%x.",
++                 stream_buffer.stream->format);
++        output_frame.Unmap();
++        res = -EINVAL;
++        break;
++      }
++    }
++    output_frame.Unmap();
+   }
+ 
+   request_context->request.reset();
+   // Mark the buffer as not in flight.
+   request_context->active = false;
+-  return 0;
++  return res;
+ }
+ 
+ int V4L2Wrapper::GetInFlightBufferCount() {
+diff --git a/modules/camera/3_4/v4l2_wrapper.h b/modules/camera/3_4/v4l2_wrapper.h
+index 2682ce7d..f90c1e37 100644
+--- a/modules/camera/3_4/v4l2_wrapper.h
++++ b/modules/camera/3_4/v4l2_wrapper.h
+@@ -101,6 +101,8 @@ class V4L2Wrapper {
+   int IoctlLocked(unsigned long request, T data);
+   // Request/release userspace buffer mode via VIDIOC_REQBUFS.
+   int RequestBuffers(uint32_t num_buffers);
++  // Release MMAP'ed device buffers.
++  void UnmapBuffers();
+ 
+   inline bool connected() { return device_fd_.get() >= 0; }
+ 
+@@ -147,6 +149,14 @@ class V4L2Wrapper {
+   // |buffers_.size()| will always be the maximum number of buffers this device
+   // can handle in its current format.
+   std::vector<RequestContext> buffers_;
++  // Whether the device is streaming with MMAP (rather than USERPTR) buffers.
++  bool use_mmap_ = false;
++  // Whether VIDIOC_STREAMON has been called (v4l2loopback returns EBUSY if it
++  // is called twice without an intermediate STREAMOFF).
++  bool streaming_ = false;
++  // Addresses/lengths of the MMAP'ed device buffers (droid-kit).
++  std::vector<void*> mapped_buffers_;
++  std::vector<size_t> mapped_lengths_;
+ 
+   friend class Connection;
+   friend class V4L2WrapperMock;

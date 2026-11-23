@@ -1,121 +1,84 @@
-# Android 12 camera path (legacy V4L2 HAL)
+# Android 12 legacy V4L2 camera (reDroid)
 
-This directory implements the plan in `docs/安卓12方案.md`:
+Working implementation of `docs/安卓12方案.md`, verified end-to-end in
+Chrome/WebView `getUserMedia` on `redroid/redroid:12.0.0_64only-latest`.
 
 ```text
-Host v4l2loopback (/dev/video10)
-        │ ffmpeg
+Host v4l2loopback (/dev/video10, YUYV 1280x720, ffmpeg)
+        │
         ▼
 Redroid 12 container
-  ├── camera.v4l2.so            → /vendor/lib64/hw/
-  ├── camera provider 2.4       → /vendor/bin/hw/
-  ├── provider rc               → /vendor/etc/init/
-  ├── camera-ns-fix.rc          → /vendor/etc/init/
-  ├── manifest-camera.xml       → /vendor/etc/vintf/manifest/
-  └── ro.hardware.camera=v4l2
+  ├── /vendor/lib64/hw/camera.v4l2.so                  (built here)
+  ├── /vendor/lib64/hw/gralloc.v4l2.so                 (built here, YUV)
+  ├── /vendor/bin/hw/android.hardware.camera.provider@2.4-service_64
+  ├── /vendor/lib64/android.hardware.camera.*.so
+  ├── /vendor/lib64/hw/android.hardware.camera.provider@2.4-impl.so
+  ├── /vendor/lib64/camera.device@*-impl.so
+  ├── /vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc
+  ├── /vendor/etc/vintf/manifest/manifest-camera.xml
+  ├── /system/etc/media_profiles_V1_0.xml
+  └── /vendor/build.prop: ro.hardware.camera=v4l2, ro.hardware.gralloc=v4l2
+        │
         ▼
-Android Camera2 → Chrome/WebView getUserMedia
+cameraserver (Camera2) → WebView getUserMedia
 ```
 
-> The official Redroid 12 image does **not** contain `camera.v4l2.so` or a
-> camera provider. That is why `build.sh` builds them from AOSP 12 instead of
-> copying them out of the image.
+## Pieces and where they come from
 
-## 1. Sync AOSP 12
+| Piece | Source |
+|---|---|
+| `camera.v4l2.so` | AOSP 12 `hardware/libhardware/modules/camera/3_4`, patched and cross-compiled with NDK r23c (`build-v4l2.sh`) |
+| `gralloc.v4l2.so` | AOSP 12 `hardware/libhardware/modules/gralloc`, patched for YUV_420_888 + `lock_ycbcr` (`build-gralloc.sh`) |
+| provider 2.4 + impl libs | AOSP 12 x86_64 emulator image `x86_64-31_r05.zip` (vendor partition), already staged in `vendor/` |
+| `media_profiles_V1_0.xml` | generated from the AOSP goldfish config, shipped in `files/` |
+
+The official reDroid 12 image has no camera provider, no `camera.v4l2.so`, and
+its software gralloc only allocates RGB buffers. All three gaps are filled by
+this directory.
+
+## Build
 
 ```bash
-cd camera/android12
-./setup-aosp.sh
+./build.sh                 # uses the running dk-build2 container if present
+BUILDER= ./build.sh        # or build on the host
+USE_PREBUILT=1 ./build.sh  # stage camera/android12/prebuilt/ instead
 ```
 
-Default tree: `/app/data/aosp12`, branch `android-12.0.0_r34`, googlesource mirror.
-This downloads tens of GB.
+Prerequisites (see `docs/CAMERA-ANDROID12.md`):
 
-## 2. Build HAL + provider
+- AOSP 12 tree at `$AOSP_DIR` (default `/app/data/aosp12`)
+- NDK r23c at `$AOSP_DIR/ndk/android-ndk-r23c`
+- reDroid 12 system libraries at `$AOSP_DIR/rd12libs`
 
-```bash
-./build.sh
-```
+`build.sh` applies `patches/0001..0004` and builds the two modules into
+`vendor/lib64/hw/`. The provider binaries in `vendor/` are not rebuilt (they
+come from the emulator image; see the doc).
 
-If the host is not suitable for AOSP 12 builds, use the privileged Ubuntu 20.04
-container path (the same one used by the detached builder):
-
-```bash
-BUILD_IN_DOCKER=1 ./build.sh
-```
-
-When the Docker daemon cannot see `$AOSP_DIR` (for example, a dev container
-path such as `/app/data/aosp12`), also set the host-visible paths:
-
-```bash
-HOST_AOSP_DIR=/data/project/droid-kit/aosp12 \
-HOST_CAMERA_DIR=/data/project/droid-kit/workspace/droid-kit/camera/android12 \
-BUILD_IN_DOCKER=1 ./build.sh
-```
-
-For a long build that should survive agent/server restarts, use the detached
-container script. It must be `--privileged`: on this Docker/overlayfs host an
-unprivileged `dpkg` can deadlock while unpacking `libc6`. The two `-v` sources
-must be paths the Docker daemon can see (on this host that is
-`/data/project/droid-kit/...`, not the dev-container `/app/data/...`):
-
-```bash
-docker run -d --privileged --name droid-kit-aosp-build \
-  -v /data/project/droid-kit/aosp12:/aosp \
-  -v /data/project/droid-kit/workspace/droid-kit/camera/android12:/camera \
-  ubuntu:20.04 bash /camera/container-build.sh
-docker logs -f droid-kit-aosp-build
-```
-
-If you already have matching prebuilt artifacts, put them in `prebuilt/` and use:
-
-```bash
-USE_PREBUILT=1 ./build.sh
-```
-
-Artifacts are staged in `camera/android12/vendor/`:
-
-```text
-vendor/lib64/hw/camera.v4l2.so
-vendor/lib64/hw/camera.device@*.so        # provider dependencies
-vendor/lib64/android.hardware.camera.*     # provider impl/interface libs
-vendor/lib64/libchrome.so / libexif.so     # if AOSP build needs them
-vendor/bin/hw/android.hardware.camera.provider@2.4-service_64
-vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc
-```
-
-The `_64` provider is used because the official Redroid 12 image is
-64-bit-only. The 32-bit `android.hardware.camera.provider@2.4-service` will not
-run there.
-
-## 3. Host camera device
+## Host video source
 
 ```bash
 ../host/setup-v4l2loopback.sh
-../host/feed.sh /path/to/video.mp4
+../host/feed.sh /path/to/video.mp4          # yuyv422 1280x720 by default
+# or a test pattern:
+ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 \
+  -pix_fmt yuyv422 -f v4l2 /dev/video10
 ```
 
-Use `PIX_FMT=yuv420p` (default) for the legacy HAL. `yuyv422` is accepted by
-some V4L2 devices but the legacy HAL's format conversion expects
-BGR32/YUV420/JPEG; if preview is black, switch the feed to YUYV and check
-logcat.
-
-## 4. Run (no image rebuild)
+## Run
 
 ```bash
-./run.sh
+PORT=5556 ./run.sh
 ```
 
-This starts `droid-kit-12-cam`, injecting the HAL/provider/rc/manifest using
-`docker create` + `docker cp` (not `-v`: Docker would create directories for
-new container paths) and patching `/vendor/build.prop` with
-`ro.hardware.camera=v4l2`.
+`run.sh` uses `docker create` + `docker cp` (not `-v`) and sets
+`ro.hardware.camera=v4l2` / `ro.hardware.gralloc=v4l2` in
+`/vendor/build.prop`, then starts the container.
 
-## 5. Verify
+## Verify
 
 ```bash
 ./check-artifacts.sh
-../verify/verify-camera.sh
+PORT=5556 ../verify/verify-camera.sh
 ```
 
 Expected:
@@ -123,30 +86,16 @@ Expected:
 ```text
 ro.hardware.camera=v4l2
 Number of camera devices: 1
+Facing: Back
 ```
 
-Browser:
+WebView check: `../verify/camtest/` (see its README). Verified output:
 
-```js
-navigator.mediaDevices.getUserMedia({video: true}).then((s) => {
-  const t = s.getVideoTracks()[0];
-  console.log(t.label, t.getCapabilities(), t.getSettings());
-});
+```text
+I CAMTEST : console: label=camera2 0, facing back
+I CAMTEST : console: frame 0 sum=856512 hash=2518866944 size=1280x720
+I CAMTEST : console: requestVideoFrameCallback count in 3s=30
 ```
 
-## Reproducible image alternative
-
-```bash
-./build.sh --android12-camera   # from repo root
-```
-
-Builds `droid-kit:12-camera` from `Dockerfile.android12-camera`.
-
-## Limitations
-
-- `camera.v4l2` is deprecated and single-stream.
-- `INFO_SUPPORTED_HARDWARE_LEVEL` remains `LIMITED`.
-- `ld.config.txt` patching is experimental; if the provider cannot load the
-  HAL, see `docs/CAMERA-ANDROID12.md` troubleshooting.
-- If preview is black despite `dumpsys media.camera` showing one device, the
-  problem is gralloc/format, not enumeration. Do not keep patching VINTF.
+`camera2` is the Chromium prefix for the Camera2 API; `facing back` comes from
+the HAL's `ANDROID_LENS_FACING_BACK`.

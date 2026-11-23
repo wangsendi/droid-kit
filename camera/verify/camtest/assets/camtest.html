@@ -1,0 +1,39 @@
+<!doctype html><meta charset="utf-8"><title>camtest</title>
+<script>
+function log(x){ console.log(typeof x === 'string' ? x : JSON.stringify(x)); }
+(async () => {
+  try {
+    log('secure=' + window.isSecureContext + ' media=' + !!(navigator.mediaDevices));
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    log('devices=' + JSON.stringify(devs.map(d => ({kind:d.kind,label:d.label,id:d.id}))));
+    const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
+    const t = s.getVideoTracks()[0];
+    log('label=' + t.label);
+    log('settings=' + JSON.stringify(t.getSettings()));
+    log('capabilities=' + JSON.stringify(t.getCapabilities()));
+    const v = document.createElement('video'); v.srcObject = s; v.muted = true; await v.play();
+    const c = document.createElement('canvas'); c.width = 320; c.height = 240;
+    const ctx = c.getContext('2d');
+    let n = 0;
+    let vfc = 0;
+    if (v.requestVideoFrameCallback) {
+      const cb = () => { vfc++; v.requestVideoFrameCallback(cb); };
+      v.requestVideoFrameCallback(cb);
+    }
+    setTimeout(() => log('requestVideoFrameCallback count in 3s=' + vfc), 3000);
+    const iv = setInterval(() => {
+      try {
+        ctx.drawImage(v, 0, 0, 320, 240);
+        const d = ctx.getImageData(140, 100, 48, 48).data;
+        let sum = 0, h = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          sum += d[i] + d[i+1] + d[i+2];
+          h = (h * 31 + d[i] + 7*d[i+1] + 13*d[i+2]) >>> 0;
+        }
+        log('frame ' + (n++) + ' sum=' + sum + ' hash=' + h + ' size=' + v.videoWidth + 'x' + v.videoHeight);
+        if (n > 5) { clearInterval(iv); log('DONE'); }
+      } catch (e) { log('frameerr ' + e); }
+    }, 500);
+  } catch (e) { log('ERR ' + e + ' ' + e.stack); }
+})();
+</script>

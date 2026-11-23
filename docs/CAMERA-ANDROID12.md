@@ -1,87 +1,142 @@
 # Android 12 相机方案（legacy camera.v4l2）
 
-本文对应 `docs/安卓12方案.md`，并记录实际实现与验证方式。
+本文对应 `docs/安卓12方案.md`，记录实际跑通的实现、注入方式和验证结果。
 
-## 0. 先说明一个硬前提
+## 0. 结论先说
 
-官方 Redroid 12 镜像**不包含**：
+`redroid/redroid:12.0.0_64only-latest` 本身不包含相机：
+
+- 没有 `/vendor/bin/hw/android.hardware.camera.provider@2.4-service_64`
+- 没有 `/vendor/lib64/hw/camera.v4l2.so`
+- `/vendor/lib64/hw/gralloc.redroid.so` 是 AOSP 软件 gralloc，只支持 RGB，
+  不能分配 `YCbCr_420_888`
+
+所以本方案做三件事：
+
+1. 从 AOSP 12 **x86_64 模拟器镜像**取出 HIDL 2.4 provider（以及它依赖的
+   `camera.device@*-impl`、HIDL 接口库、init rc）；
+2. 从 AOSP 12 `hardware/libhardware` 的源码**手写编译** `camera.v4l2.so`
+   （不依赖 Soong；本机 AOSP 树是部分同步/混合版本，Soong 无法完整解析）；
+3. 从 `hardware/libhardware/modules/gralloc` 编译一个支持 YUV 的
+   `gralloc.v4l2.so`，解决 Camera2 `ImageReader` 的 `YCbCr_420_888` 分配问题。
+
+最终在 WebView 里 `getUserMedia` 可以拿到：
 
 ```text
-/system/lib64/hw/camera.v4l2.so
-/vendor/lib64/hw/camera.v4l2.so
-/vendor/bin/hw/android.hardware.camera.provider@2.4-service_64
+label=camera2 0, facing back
+size=1280x720
+requestVideoFrameCallback count in 3s=30+
 ```
 
-对 `redroid/redroid:12.0.0_64only-latest` 完整解包检查，`camera.v4l2.so`
-不存在，`/vendor/bin/hw` 也没有任何 camera provider；VINTF 没有 camera
-声明，`ro.hardware.camera` 未设置。
-
-因此方案中的“从官方镜像抠出原版 HAL”这一步无法直接执行。本仓库的做法是：
-
-> 从 AOSP 12 源码编译 `camera.v4l2.so` 和 HIDL 2.4 provider，然后再用
-> `docker cp` 注入。不要用 `-v` 挂新文件：Docker 会把不存在的容器目标创建成
-> 目录，HAL/rc/VINTF 会静默失效。
+> Android 12 的 Chromium/WebView 走 Camera2 API，所以 label 前缀是
+> `camera2`；`facing back` 来自 HAL 的 `ANDROID_LENS_FACING_BACK`。Camera1
+> 时代的 `camera 0, facing back` 在本版本 Chromium 上不会出现。
 
 ## 1. 架构
 
 ```text
 Host Linux
-  v4l2loopback (/dev/video10)
-        │ ffmpeg
+  v4l2loopback (/dev/video10, YUYV 1280x720)
+        │ ffmpeg -pix_fmt yuyv422
         ▼
 Redroid 12 container
-  ├── /vendor/lib64/hw/camera.v4l2.so              (AOSP 12 build, patched)
+  ├── /vendor/lib64/hw/camera.v4l2.so                  (自编)
+  ├── /vendor/lib64/hw/gralloc.v4l2.so                 (自编, YUV)
+  ├── /vendor/lib64/hw/android.hardware.camera.provider@2.4-impl.so
+  ├── /vendor/lib64/android.hardware.camera.*.so
+  ├── /vendor/lib64/camera.device@*-impl.so
   ├── /vendor/bin/hw/android.hardware.camera.provider@2.4-service_64
   ├── /vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc
-  ├── /vendor/etc/init/camera-ns-fix.rc
   ├── /vendor/etc/vintf/manifest/manifest-camera.xml
-  └── ro.hardware.camera=v4l2
+  ├── /system/etc/media_profiles_V1_0.xml              (Camera1 shim 需要)
+  └── /vendor/build.prop
+        ro.hardware.camera=v4l2
+        ro.hardware.gralloc=v4l2
         ▼
 cameraserver → Camera2 → Chrome/WebView getUserMedia
 ```
 
-## 2. 构建 AOSP 12 HAL/provider
+## 2. 组件来源
 
-```bash
-cd camera/android12
-./setup-aosp.sh          # 同步 AOSP 12（约几十 GB）
-./build.sh               # 应用补丁并编译
-```
+### 2.1 provider：AOSP 12 x86_64 模拟器镜像
 
-> 在当前 Docker/overlayfs 环境里，非 privileged 容器解包 `libc6` 可能卡死。
-> 长构建请用下面的 detached + `--privileged` 容器；普通 Linux 主机不受影响。
-
-如果宿主机不适合直接编译 AOSP 12，用 privileged Ubuntu 20.04 容器：
-
-```bash
-BUILD_IN_DOCKER=1 ./build.sh
-```
-
-> 非 privileged 容器在当前 Docker/overlayfs 上解包 `libc6` 可能死锁；
-> `build.sh` 已使用 `--privileged`。Docker daemon 看不到 `/app/data` 时，
-> 设置 `HOST_AOSP_DIR` / `HOST_CAMERA_DIR`（见 `camera/android12/README.md`）。
-
-产物：
+下载 `https://dl.google.com/android/repository/sys-img/android/x86_64-31_r05.zip`
+（Android 12/API 31，AOSP 默认镜像），解开 `vendor.img` 后取出：
 
 ```text
-camera/android12/vendor/lib64/hw/camera.v4l2.so
-camera/android12/vendor/lib64/hw/camera.device@*.so
-camera/android12/vendor/lib64/android.hardware.camera.*.so
-camera/android12/vendor/bin/hw/android.hardware.camera.provider@2.4-service_64
-camera/android12/vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc
+vendor/bin/hw/android.hardware.camera.provider@2.4-service_64
+vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc
+vendor/lib64/hw/android.hardware.camera.provider@2.4-impl.so
+vendor/lib64/android.hardware.camera.{common@1.0,device@1.0,
+    device@3.2..3.7,metadata@3.2..3.6,provider@2.4,provider@2.4-legacy,
+    provider@2.4-external}.so
+vendor/lib64/camera.device@{1.0,3.2,3.3,3.4,3.4-external,3.5,3.5-external,
+    3.6-external}-impl.so
+vendor/lib64/libtinyxml2.so
 ```
 
-> 官方 Redroid 12 是 64-bit only，所以必须用 `_64` provider；32 位的
-> `android.hardware.camera.provider@2.4-service` 在 64only 镜像里没有 32 位
-> linker/libc，起不来。
+这些文件已经放在 `camera/android12/vendor/`（`.gitignore` 忽略，见
+`docs/CAMERA-ANDROID12.md` 的“可复现”一节）。provider 是 Android 12 的
+vendor 二进制，和 reDroid 12 的 system 库版本一致，可以直接运行。
+
+### 2.2 HAL / gralloc：从 AOSP 12 源码手写编译
+
+```bash
+camera/android12/build.sh
+```
+
+`build.sh` 会：
+
+1. 对 `$AOSP_DIR/hardware/libhardware` 应用 `patches/0001..0004`；
+2. 用 NDK r23c 的 `x86_64-linux-android31-clang++` 编译：
+   - `build-v4l2.sh` → `camera.v4l2.so`
+   - `build-gralloc.sh` → `gralloc.v4l2.so`
+3. 检查 `vendor/` 里的 provider 二进制与产物。
+
+为什么不用 Soong：本机 AOSP 树是部分同步的混合树，Soong 解析阶段会因大量
+无关模块缺失而失败；camera.v4l2 本身是普通 libhardware HAL，手写编译更可控。
+HAL 链接的是 reDroid 12 系统里的库（`$AOSP_DIR/rd12libs`，由镜像导出）。
 
 补丁：
 
-- `patches/0001-v4l2-report-back-camera.patch`
-  - `ANDROID_LENS_FACING_EXTERNAL` → `ANDROID_LENS_FACING_BACK`
-  - 光圈/焦距改成手机常见值
-- `patches/0002-v4l2-hal-name.patch`
-  - 去掉明显的 V4L2/AOSP 模块名
+| 补丁 | 作用 |
+|---|---|
+| `0001-v4l2-report-back-camera.patch` | `LENS_FACING_EXTERNAL` → `BACK`，光圈/焦距改为手机常见值 |
+| `0002-v4l2-hal-name.patch` | 去掉 HAL 模块名里的 V4L2/AOSP 字样 |
+| `0003-v4l2-multistream-mmap.patch` | 多 stream 支持、每路输出转换、MMAP 回退、STREAMON 幂等、放宽 request settings |
+| `0004-gralloc-yuv.patch` | 软件 gralloc 支持 YUV_420_888/YV12/NV21/YUYV + `lock_ycbcr` |
+
+`0003` 解决的实际问题：
+
+- Camera1 配 2 路 stream（preview + JPEG），Camera2/WebView 还会加
+  `YCbCr_420_888`；原 HAL 直接拒绝，报
+  `V4L2 only supports 1 stream configuration at a time`。
+- v4l2loopback 只支持 `V4L2_MEMORY_MMAP`，原 HAL 固定用 USERPTR，
+  报 `REQBUFS failed: Invalid argument`。
+- v4l2loopback 对重复 `VIDIOC_STREAMON` 返回 `EBUSY`。
+
+`0004` 解决的实际问题：
+
+```text
+GraphicBufferAllocator: Failed to allocate (1280 x 720) ... format 35 usage 33: 3
+```
+
+reDroid 的软件 gralloc 只认 RGB；Camera2 `ImageReader` 要
+`YCbCr_420_888`。`gralloc.v4l2.so` 增加 YUV 分配和 `(*lock_ycbcr)()`，
+通过 `ro.hardware.gralloc=v4l2` 选中。
+
+### 2.3 media profiles
+
+reDroid 12 没有 `/system/etc/media_profiles_V1_0.xml`。Camera1 shim
+（`Camera2Client`）在初始化时用视频编码器能力算预览尺寸，缺文件会得到空
+列表并拒绝打开相机：
+
+```text
+Camera2-Parameters: generated preview size list is empty!!
+```
+
+`files/media_profiles_V1_0.xml` 由 `run.sh` 注入到
+`/system/etc/media_profiles_V1_0.xml`。
 
 ## 3. Host：准备视频源
 
@@ -94,67 +149,46 @@ camera/host/feed.sh /path/to/video.mp4
 
 ```text
 /dev/video10
-1920x1080 @ 30
-pix_fmt=yuv420p
+1280x720 @ 30
+pix_fmt=yuyv422
 card_label=Camera
+```
+
+也可以不用文件，直接测试图案：
+
+```bash
+ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 \
+  -pix_fmt yuyv422 -f v4l2 /dev/video10
 ```
 
 说明：
 
-- 老 V4L2 HAL 要求 `BGR32 / YUV420 / JPEG`，所以默认喂 `yuv420p`。
-- 如果你坚持 `yuyv422`，可能只枚举、不出帧；先看 `logcat`。
-- `card_label` 不要带 `Virtual`、`Loopback`、`v4l2` 等字样。
+- HAL 会优先选择设备真实支持的格式再转换到各条 stream；YUYV 最稳。
+- 如果宿主机 `/dev/video10` 是在开发容器里 `mknod` 的，Docker daemon 看不到，
+  `--device` 会报 `no such file or directory`；需要在宿主机 `/dev` 里创建同名
+  设备节点（本仓库的 `run.sh` 用 `--device /dev/video10:/dev/video0`）。
 
 ## 4. 运行（不重打包）
 
 ```bash
 cd camera/android12
-./run.sh
+PORT=5556 ./run.sh
 ```
 
-`run.sh` 会：
+`run.sh` 使用 `docker create` + `docker cp` 注入，**不要用 `-v` 挂不存在的
+目标文件**（Docker 会创建成目录）：
 
-1. `docker create` 容器（带 `--device /dev/video10:/dev/video0`）；
-2. `docker cp` 注入 HAL、provider、provider/device impl 库、provider rc、
-   linker fix、VINTF fragment；
-3. 从容器里取出 `/vendor/build.prop`，追加/替换
-   `ro.hardware.camera=v4l2`，再 `docker cp` 回去；
-4. `docker start`。
-
-等价的核心操作：
-
-```bash
-docker create --name droid-kit-12-cam --privileged \
-  --device /dev/video10:/dev/video0 -p 5555:5555 \
-  redroid/redroid:12.0.0_64only-latest \
-  androidboot.redroid_width=1080 \
-  androidboot.redroid_height=1920 \
-  androidboot.redroid_dpi=480
-
-docker cp vendor/lib64/hw/camera.v4l2.so \
-  droid-kit-12-cam:/vendor/lib64/hw/camera.v4l2.so
-docker cp vendor/bin/hw/android.hardware.camera.provider@2.4-service_64 \
-  droid-kit-12-cam:/vendor/bin/hw/android.hardware.camera.provider@2.4-service_64
-docker cp vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc \
-  droid-kit-12-cam:/vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc
-docker cp files/camera-ns-fix.rc droid-kit-12-cam:/vendor/etc/init/camera-ns-fix.rc
-docker cp files/manifest-camera.xml \
-  droid-kit-12-cam:/vendor/etc/vintf/manifest/manifest-camera.xml
-# build.prop: 取出、改、放回
-docker cp droid-kit-12-cam:/vendor/build.prop /tmp/vendor-build.prop
-echo 'ro.hardware.camera=v4l2' >> /tmp/vendor-build.prop
-docker cp /tmp/vendor-build.prop droid-kit-12-cam:/vendor/build.prop
-
-docker start droid-kit-12-cam
-```
-
-> 不要用 `-v $PWD/vendor/...:/vendor/...`。目标文件在基础镜像里不存在时，
-> Docker 会把容器目标创建成**目录**，init 无法解析 rc，VINTF 也看不到 fragment。
+1. HAL、gralloc、provider、provider/device impl 库、HIDL 接口库；
+2. provider rc、`camera-ns-fix.rc`、VINTF fragment；
+3. `media_profiles_V1_0.xml` → `/system/etc/`；
+4. 修改 `/vendor/build.prop`：
+   `ro.hardware.camera=v4l2`、`ro.hardware.gralloc=v4l2`；
+5. `docker start`。
 
 ## 5. 验证
 
 ```bash
-camera/verify/verify-camera.sh
+PORT=5556 camera/verify/verify-camera.sh
 ```
 
 关键输出：
@@ -162,124 +196,67 @@ camera/verify/verify-camera.sh
 ```text
 ro.hardware.camera=v4l2
 Number of camera devices: 1
+Facing: Back
 ```
 
-### 分层验收
+浏览器/WebView 验证（`camera/verify/camtest`）：
 
-| 层级 | 命令 | 通过标准 | 失败含义 |
-|---|---|---|---|
-| provider 注册 | `adb shell 'lshal \| grep -i camera'` | 出现 `ICameraProvider/legacy/0` | VINTF/rc/二进制问题 |
-| 设备枚举 | `dumpsys media.camera` | `Number of camera devices: 1` | HAL 未加载/无 `/dev/video*` |
-| 帧 | 打开 Open Camera | 预览有画面 | 格式/gralloc |
-| 浏览器 | `getUserMedia` | 有 video track | WebView/权限/相机 id |
-
-不要跳过 provider 注册直接看浏览器；`getUserMedia` 失败时很难判断是 HAL 还是 WebView。
-
-浏览器：
-
-```js
-navigator.mediaDevices.enumerateDevices().then(console.log)
-
-navigator.mediaDevices.getUserMedia({video: true}).then((s) => {
-  const t = s.getVideoTracks()[0];
-  console.log('label:', t.label);
-  console.log('capabilities:', t.getCapabilities());
-  console.log('settings:', t.getSettings());
-});
+```bash
+BUILD_TOOLS=$ANDROID_HOME/build-tools/33.0.2 \
+ANDROID_JAR=$ANDROID_HOME/platforms/android-31/android.jar \
+  camera/verify/camtest/build-apk.sh
+adb install -r camera/verify/camtest/build/camtest.apk
+adb shell pm grant org.droidkit.camtest android.permission.CAMERA
+adb logcat -c
+adb shell am start -n org.droidkit.camtest/.MainActivity
+adb logcat -d | grep CAMTEST
 ```
 
-期望：
+实测（reDroid 12 / API 31，v4l2loopback + testsrc2）：
 
-- `label` 不含 `virtual` / `v4l2` / `loopback`
-- `facingMode` 为 `environment`（或至少不是 external）
-- `getCapabilities()` 有 width/height/frameRate
-- 预览不黑屏
+```text
+I CAMTEST : console: label=camera2 0, facing back
+I CAMTEST : console: settings={"facingMode":"environment","width":1280,
+              "height":720,"frameRate":30,...}
+I CAMTEST : console: frame 0 sum=856512 hash=2518866944 size=1280x720
+I CAMTEST : console: requestVideoFrameCallback count in 3s=30
+I CAMTEST : console: DONE
+```
+
+`dumpsys media.camera` 同时显示：
+
+```text
+Number of camera devices: 1
+API1 info:
+  Facing: Back
+API2 camera characteristics:
+  android.lens.facing: [BACK]
+```
 
 ## 6. 常见问题
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `Could not load camera HAL module: -2` | HAL 不在 `/vendor/lib64/hw` | 确认 `docker cp` 路径 |
-| provider 没起来 | VINTF 未声明 `legacy/0` | 检查 `/vendor/etc/vintf/manifest/manifest-camera.xml` |
-| 0 个设备 | `ro.hardware.camera` 没生效 | 检查 `getprop ro.hardware.camera`；确认 `/vendor/build.prop` 已改 |
-| provider 崩溃/找不到 libcamera_client | linker namespace | 检查 `camera-ns-fix.rc` 是否执行；`/linkerconfig/ld.config.txt` 的 sphal 是否包含 `/system/lib64` |
-| 有设备但黑屏 | gralloc/格式不兼容 | 换 `PIX_FMT=yuyv422` 或改 HAL 格式转换；这是最难的一层 |
-| 浏览器 label 仍异常 | HAL metadata 不够 | 确认补丁已生效（`LENS_FACING_BACK`），camera id 为 0 |
+| `Could not load camera HAL module: -2` | HAL 不在 `/vendor/lib64/hw` | 重新 `run.sh`，确认 `docker cp` 路径 |
+| `library "libgui.so" not found` / `libcamera_client` | HAL 误链接系统私有库 | 本方案已把 `CameraMetadata.cpp` 静态编进 HAL，不依赖 `libcamera_client` |
+| provider 起不来，缺 `android.hidl.allocator@1.0.so` | 系统库不在 vendor namespace | `vendor/lib64/android.hidl.allocator@1.0.so` 已随 run.sh 注入 |
+| 0 个设备 | `ro.hardware.camera` 没生效 | `getprop ro.hardware.camera` 应为 `v4l2` |
+| `V4L2 only supports 1 stream` | 未应用 `0003` | 重新 `build.sh` |
+| `REQBUFS failed: Invalid argument` | 驱动只支持 MMAP | `0003` 已含 MMAP 回退 |
+| `Failed to allocate ... format 35` | gralloc 不支持 YUV | 确认 `ro.hardware.gralloc=v4l2` 且 `gralloc.v4l2.so` 已注入 |
+| `generated preview size list is empty` | 缺 media profiles | 确认 `/system/etc/media_profiles_V1_0.xml` 存在 |
+| 有 track 但黑屏/无帧 | 未应用 `0003` 的每路转换或 STREAMON 幂等 | 看 `logcat -s V4L2Wrapper V4L2Camera` |
+| 浏览器 label 带 `camera2` 前缀 | Android 12 Chromium 使用 Camera2 API | 正常；facing 为 `back` 即符合要求 |
 | Android 13 上失败 | HIDL/VINTF 变化 | 本方案只针对 Android 12 |
 
-### 6.0 浏览器 label 是怎么来的
+## 7. 可复现性
 
-Chrome/WebView 不会读取 HAL 的模块名。它用：
-
-```text
-"camera " + index + ", facing " + {front|back|external|unknown}
-```
-
-- `index` 是 `CameraManager.getCameraIdList()` 里的位置
-- facing 来自 `CameraCharacteristics.LENS_FACING`
-
-所以：
-
-- `camera.v4l2` 只有一台设备、ID 0、`LENS_FACING_BACK` → `camera 0, facing back`
-- 如果保持 `LENS_FACING_EXTERNAL` → `camera 0, facing external`，且
-  `getCapabilities().facingMode` 为 `[]`
-- `INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED` 不会产生 external label
-
-补丁 `0001-v4l2-report-back-camera.patch` 就是改这个值。
-
-### 6.1 gralloc 风险（重要）
-
-Redroid 自带的 `gralloc.redroid.so` 是给显示/视频用的，不一定实现 Camera
-需要的 `gralloc_lock_ycbcr`，也不一定接受 `YCbCr_420_888` /
-`IMPLEMENTATION_DEFINED`。典型失败：
-
-```text
-GraphicBufferAllocator: Failed to allocate (4 x 4) ... format 43/56
-```
-
-或：
-
-```text
-ExtCamUtils: formatConvert: unsupported flexible yuv layout
-```
-
-如果 `dumpsys media.camera` 已经是 1，但预览/拍照黑屏，先看：
-
-```bash
-adb logcat -d | grep -iE 'gralloc|GraphicBuffer|lock_ycbcr|formatConvert'
-```
-
-这说明问题在 gralloc，不在 VINTF/HAL 加载。可选处理：
-
-1. 用 droidpool 的 gralloc camera 补丁适配 Redroid 12 的
-   `vendor/redroid/gralloc`，重新编 `gralloc.redroid.so` 并注入；
-2. 或改用 Android 13 external camera provider 路线（它同样需要 gralloc 补丁，
-   但 AOSP 13 的路径和社区补丁更成熟）；
-3. 或直接用真机。
-
-不要把“设备数 = 1”当成相机可用；必须验证预览/拍照。
-
-## 7. 限制与检测
-
-- `camera.v4l2` 是已废弃 HAL，单 stream、无热插拔、Camera1 基本不可用。
-- 即使 `LENS_FACING_BACK`，`INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED` 仍在；
-  强行报 `FULL` 需要补齐大量 metadata，反而更容易失败。
-- 浏览器 `getUserMedia` 只验证“能拿到流”，不等于能过活体/风控。
-- 如果目标 App 做帧分析、活体、USB/驱动检测，虚拟摄像头仍然会被识别；
-  这种场景应使用真机。
-
-## 8. 仓库内相关文件
-
-```text
-camera/android12/setup-aosp.sh
-camera/android12/build.sh
-camera/android12/run.sh
-camera/android12/Dockerfile.builder
-camera/android12/patches/*.patch
-camera/android12/files/manifest-camera.xml
-camera/android12/files/camera-ns-fix.rc
-camera/host/setup-v4l2loopback.sh
-camera/host/feed.sh
-camera/verify/verify-camera.sh
-Dockerfile.android12-camera
-```
+- 源码补丁：`camera/android12/patches/0001..0004`，`build.sh` 自动应用。
+- HAL/gralloc 编译：`build-v4l2.sh`、`build-gralloc.sh`（NDK r23c + reDroid 12
+  导出的 `rd12libs`）。
+- provider 等预编译二进制：目前放在 `camera/android12/vendor/`（被
+  `.gitignore` 忽略，约 2.4 MB）。它们来自上文的
+  `x86_64-31_r05.zip`，不是本机 AOSP 构建产物；如需完全从零复现，按 2.1
+  解包该镜像即可。
+- 运行脚本：`run.sh` + `files/`（rc、VINTF、media profiles）。
+- 验证：`camera/verify/verify-camera.sh` 和 `camera/verify/camtest/`。

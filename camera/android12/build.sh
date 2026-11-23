@@ -1,27 +1,43 @@
 #!/usr/bin/env bash
-# Build the legacy V4L2 camera HAL and the HIDL 2.4 camera provider from an
-# AOSP 12 tree, then stage them in camera/android12/vendor/ for docker cp injection.
+# Build the Android 12 legacy camera stack and stage it in
+# camera/android12/vendor/ for `docker cp` injection by run.sh.
 #
-# The AOSP tree is expected at $AOSP_DIR (default /app/data/aosp12). Create it
-# with ./setup-aosp.sh first.
+# What is built from source (AOSP 12 hardware/libhardware):
+#   * camera.v4l2.so      - legacy camera3 HAL, patched for multi-stream and
+#                           MMAP streaming (v4l2loopback only supports MMAP)
+#   * gralloc.v4l2.so     - software gralloc with YUV_420_888 allocation and
+#                           (*lock_ycbcr) support (reDroid's stock gralloc is
+#                           RGB-only, which breaks Camera2 ImageReaders)
+#
+# What is staged from the AOSP 12 x86_64 emulator vendor image (see docs):
+#   * android.hardware.camera.provider@2.4-service_64
+#   * android.hardware.camera.provider@2.4-impl.so, camera.device@*-impl.so
+#   * the camera HIDL interface libraries
+# Those binaries are already in vendor/ and are not rebuilt here.
+#
+# Prerequisites (see README/docs):
+#   * AOSP 12 tree at $AOSP_DIR with hardware/libhardware
+#   * NDK r23c unpacked at $AOSP_DIR/ndk/android-ndk-r23c
+#   * reDroid 12 shared libraries staged at $AOSP_DIR/rd12libs
+#
+# Usage:
+#   ./build.sh                  # build with the dk-build2 container if running
+#   BUILDER= ./build.sh         # build on the host (needs the same paths)
+#   USE_PREBUILT=1 ./build.sh   # stage camera/android12/prebuilt/ instead
 set -euo pipefail
 
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 AOSP_DIR=${AOSP_DIR:-/app/data/aosp12}
-JOBS=${JOBS:-16}
-BUILD_IN_DOCKER=${BUILD_IN_DOCKER:-1}
-LUNCH_TARGET=${LUNCH_TARGET:-aosp_x86_64-eng}
-HOST_AOSP_DIR=${HOST_AOSP_DIR:-$AOSP_DIR}
-HOST_CAMERA_DIR=${HOST_CAMERA_DIR:-$repo_dir}
 OUT="$repo_dir/vendor"
+BUILDER=${BUILDER-dk-build2}
 
 die() { echo "error: $*" >&2; exit 1; }
 
 if [[ ${USE_PREBUILT:-0} == 1 ]]; then
   src="$repo_dir/prebuilt"
   [[ -f "$src/lib64/hw/camera.v4l2.so" ]] || die "missing $src/lib64/hw/camera.v4l2.so"
-  [[ -f "$src/bin/hw/android.hardware.camera.provider@2.4-service_64" ]] || die "missing $src/bin/hw/android.hardware.camera.provider@2.4-service_64"
-  [[ -f "$src/etc/init/android.hardware.camera.provider@2.4-service_64.rc" ]] || die "missing $src/etc/init/android.hardware.camera.provider@2.4-service_64.rc"
+  [[ -f "$src/lib64/hw/gralloc.v4l2.so" ]] || die "missing $src/lib64/hw/gralloc.v4l2.so"
+  [[ -f "$src/bin/hw/android.hardware.camera.provider@2.4-service_64" ]] || die "missing provider"
   rm -rf "$OUT"
   mkdir -p "$OUT"
   cp -a "$src/." "$OUT/"
@@ -29,26 +45,20 @@ if [[ ${USE_PREBUILT:-0} == 1 ]]; then
   exit 0
 fi
 
-if [[ ${FORCE_BUILD:-0} != 1 \
-   && -s "$OUT/lib64/hw/camera.v4l2.so" \
-   && -x "$OUT/bin/hw/android.hardware.camera.provider@2.4-service_64" \
-   && -f "$OUT/etc/init/android.hardware.camera.provider@2.4-service_64.rc" \
-   && -f "$OUT/lib64/hw/android.hardware.camera.provider@2.4-impl.so" ]] \
-   && file "$OUT/lib64/hw/camera.v4l2.so" | grep -q 'ELF 64-bit' \
-   && file "$OUT/bin/hw/android.hardware.camera.provider@2.4-service_64" | grep -q 'ELF 64-bit'; then
-  echo "Reusing staged artifacts in $OUT (set FORCE_BUILD=1 to rebuild)"
-  exit 0
-fi
-
-[[ -d "$AOSP_DIR/build" ]] || die "AOSP tree not found at $AOSP_DIR; run ./setup-aosp.sh"
+[[ -d "$AOSP_DIR/hardware/libhardware/modules/camera/3_4" ]] || \
+  die "AOSP tree not found at $AOSP_DIR (run ./setup-aosp.sh)"
+[[ -d "$AOSP_DIR/ndk/android-ndk-r23c" ]] || \
+  die "NDK r23c not found at $AOSP_DIR/ndk/android-ndk-r23c"
+[[ -d "$AOSP_DIR/rd12libs" ]] || \
+  die "reDroid 12 libraries not found at $AOSP_DIR/rd12libs"
 
 patch_one() {
-  local patch=$1
-  if git -C "$AOSP_DIR/hardware/libhardware" apply -p3 --reverse --check "$patch" >/dev/null 2>&1; then
+  local root=$1 patch=$2
+  if git -C "$root" apply -p3 --reverse --check "$patch" >/dev/null 2>&1; then
     echo "already applied: $(basename "$patch")"
-  elif git -C "$AOSP_DIR/hardware/libhardware" apply -p3 --check "$patch" >/dev/null 2>&1; then
+  elif git -C "$root" apply -p3 --check "$patch" >/dev/null 2>&1; then
     echo "applying: $(basename "$patch")"
-    git -C "$AOSP_DIR/hardware/libhardware" apply -p3 "$patch"
+    git -C "$root" apply -p3 "$patch"
   else
     die "cannot apply $patch (tree has local changes or version mismatch)"
   fi
@@ -56,87 +66,35 @@ patch_one() {
 
 for p in "$repo_dir"/patches/*.patch; do
   [[ -e "$p" ]] || continue
-  patch_one "$p"
+  patch_one "$AOSP_DIR/hardware/libhardware" "$p"
 done
 
-# --- build -------------------------------------------------------------------
-if [[ "$BUILD_IN_DOCKER" == "1" ]]; then
-  command -v docker >/dev/null || die "docker is required for BUILD_IN_DOCKER=1"
-  # The detached/foreground builder must be privileged: unprivileged dpkg can
-  # deadlock while upgrading libc6 on this Docker/overlayfs host.
-  docker run --rm --privileged \
-    -v "$HOST_AOSP_DIR:/aosp" \
-    -v "$HOST_CAMERA_DIR:/camera" \
-    -e LUNCH_TARGET="$LUNCH_TARGET" \
-    -e JOBS="$JOBS" \
-    ubuntu:20.04 bash /camera/container-build.sh
-else
-  cd "$AOSP_DIR"
-  set +u
-  source build/envsetup.sh
-  lunch "$LUNCH_TARGET"
-  export USE_CAMERA_V4L2_HAL=true
-  m -j"$JOBS" camera.v4l2 android.hardware.camera.provider@2.4-service_64 android.hardware.camera.provider@2.4-impl android.hardware.camera.provider@2.4-legacy android.hardware.camera.provider@2.4-external camera.device@1.0-impl camera.device@3.2-impl camera.device@3.3-impl camera.device@3.4-impl camera.device@3.4-external-impl camera.device@3.5-impl camera.device@3.5-external-impl
-fi
-
-# --- collect artifacts -------------------------------------------------------
-product_dir=$(find "$AOSP_DIR/out/target/product" -maxdepth 1 -mindepth 1 -type d | head -1)
-[[ -n "$product_dir" ]] || die "no build product directory under $AOSP_DIR/out/target/product"
-
-hal=$(find "$product_dir" -type f -path '*/system/lib64/hw/camera.v4l2.so' | head -1)
-[[ -n "$hal" ]] || hal=$(find "$product_dir" -type f -name 'camera.v4l2.so' | head -1)
-provider=$(find "$product_dir" -type f -name 'android.hardware.camera.provider@2.4-service_64' | head -1)
-[[ -n "$hal" ]] || die "camera.v4l2.so not found in $product_dir"
-[[ -n "$provider" ]] || die "android.hardware.camera.provider@2.4-service_64 not found in $product_dir"
-
-file "$hal" | grep -q 'ELF 64-bit' || die "$hal is not 64-bit"
-file "$provider" | grep -q 'ELF 64-bit' || die "$provider is not 64-bit"
-
-rm -rf "$OUT"
-mkdir -p "$OUT/lib64/hw" "$OUT/bin/hw" "$OUT/etc/init"
-install -m 0644 "$hal" "$OUT/lib64/hw/camera.v4l2.so"
-install -m 0755 "$provider" "$OUT/bin/hw/android.hardware.camera.provider@2.4-service_64"
-
-# The provider service dlopens its HIDL implementation and the camera.device
-# impl libraries. Those are not present in the official Redroid image, so stage
-# them next to the HAL. libchrome/libexif are needed by camera.v4l2 on some
-# AOSP 12 builds.
-copy_camera_libs() {
-  local dir=$1 dest=$2 f base
-  [[ -d "$dir" ]] || return 0
-  for f in "$dir"/*.so; do
-    [[ -e "$f" ]] || continue
-    base=$(basename "$f")
-    case "$base" in
-      android.hardware.camera* | camera.device@* | libcamera_metadata.so | libtinyxml2.so)
-        install -m 0644 "$f" "$dest/$base"
-        ;;
-    esac
-  done
+build() {
+  local script=$1
+  if [[ -n "$BUILDER" ]] && docker inspect "$BUILDER" >/dev/null 2>&1; then
+    docker exec "$BUILDER" bash "/camera/$script"
+  else
+    AOSP="$AOSP_DIR" OUT="$OUT" bash "$repo_dir/$script"
+  fi
 }
-copy_camera_libs "$product_dir/vendor/lib64" "$OUT/lib64"
-copy_camera_libs "$product_dir/system/lib64" "$OUT/lib64"
-copy_camera_libs "$product_dir/vendor/lib64/hw" "$OUT/lib64/hw"
-copy_camera_libs "$product_dir/system/lib64/hw" "$OUT/lib64/hw"
 
-rc_src="$AOSP_DIR/hardware/interfaces/camera/provider/2.4/default/android.hardware.camera.provider@2.4-service_64.rc"
-if [[ -f "$rc_src" ]]; then
-  install -m 0644 "$rc_src" "$OUT/etc/init/android.hardware.camera.provider@2.4-service_64.rc"
-else
-  echo "warning: provider rc not found at $rc_src; run.sh will fail unless you supply it" >&2
-fi
+build build-v4l2.sh
+build build-gralloc.sh
+
+# The provider/impl binaries live in vendor/ but are gitignored (they are
+# extracted from the emulator image, not built from local sources).
+[[ -x "$OUT/bin/hw/android.hardware.camera.provider@2.4-service_64" ]] || \
+  die "provider binary missing in $OUT; see docs/CAMERA-ANDROID12.md section 2"
+[[ -f "$OUT/lib64/hw/android.hardware.camera.provider@2.4-impl.so" ]] || \
+  die "provider impl missing in $OUT; see docs/CAMERA-ANDROID12.md section 2"
 
 cat > "$OUT/BUILD-INFO.txt" <<EOF
 built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 aosp_dir=$AOSP_DIR
-lunch_target=$LUNCH_TARGET
-hal=$hal
-provider=$provider
+builder=${BUILDER:-host}
 EOF
 
 echo
-echo "Staged artifacts:"
-file "$OUT/lib64/hw/camera.v4l2.so" "$OUT/bin/hw/android.hardware.camera.provider@2.4-service_64"
-readelf -d "$OUT/lib64/hw/camera.v4l2.so" | grep NEEDED || true
+"$repo_dir/check-artifacts.sh"
 echo
-echo "Next: ./run.sh"
+echo "Next: HOST_IP=... ./run.sh"

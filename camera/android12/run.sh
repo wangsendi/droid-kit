@@ -22,6 +22,7 @@ HOST_IP=${HOST_IP:-127.0.0.1}
 
 die() { echo "error: $*" >&2; exit 1; }
 [[ -f "$vendor/lib64/hw/camera.v4l2.so" ]] || die "missing HAL: $vendor/lib64/hw/camera.v4l2.so (run ./build.sh)"
+[[ -f "$vendor/lib64/hw/gralloc.v4l2.so" ]] || die "missing gralloc: $vendor/lib64/hw/gralloc.v4l2.so (run ./build.sh)"
 [[ -f "$vendor/bin/hw/android.hardware.camera.provider@2.4-service_64" ]] || die "missing provider (run ./build.sh)"
 [[ -f "$vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc" ]] || die "missing provider rc (run ./build.sh)"
 [[ -e "$VIDEO_DEV" ]] || die "$VIDEO_DEV not found; load v4l2loopback and start the feed first"
@@ -63,6 +64,10 @@ copy "$vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc" \
   "/vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc"
 copy "$files/camera-ns-fix.rc" "/vendor/etc/init/camera-ns-fix.rc"
 copy "$files/manifest-camera.xml" "/vendor/etc/vintf/manifest/manifest-camera.xml"
+# MediaProfiles is empty in the reDroid image.  The camera1 shim
+# (Camera2Client) derives the preview/video size list from the video encoder
+# caps in this XML and refuses to open the camera when it is missing.
+copy "$files/media_profiles_V1_0.xml" "/system/etc/media_profiles_V1_0.xml"
 
 # ro.hardware.camera must be set from /vendor/build.prop before boot.
 # /vendor/build.prop is a regular file in redroid 12 and is loaded after
@@ -70,11 +75,18 @@ copy "$files/manifest-camera.xml" "/vendor/etc/vintf/manifest/manifest-camera.xm
 prop_tmp=$(mktemp)
 docker cp "$NAME:/vendor/build.prop" "$prop_tmp" >/dev/null 2>&1 || \
   die "cannot read /vendor/build.prop from $BASE_IMAGE"
-if grep -q '^ro.hardware.camera=' "$prop_tmp"; then
-  sed -i 's/^ro.hardware.camera=.*/ro.hardware.camera=v4l2/' "$prop_tmp"
-else
-  echo 'ro.hardware.camera=v4l2' >> "$prop_tmp"
-fi
+set_prop() {
+  local key=$1 value=$2
+  if grep -q "^$key=" "$prop_tmp"; then
+    sed -i "s|^$key=.*|$key=$value|" "$prop_tmp"
+  else
+    echo "$key=$value" >> "$prop_tmp"
+  fi
+}
+set_prop ro.hardware.camera v4l2
+# reDroid's ashmem gralloc only allocates RGB; the camera HAL and Camera2
+# ImageReaders also need YUV_420_888 buffers.
+set_prop ro.hardware.gralloc v4l2
 docker cp "$prop_tmp" "$NAME:/vendor/build.prop"
 rm -f "$prop_tmp"
 
