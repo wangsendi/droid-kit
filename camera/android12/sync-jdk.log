@@ -1,9 +1,0 @@
-error: device/linaro/hikey-kernel: Cannot remove project: uncommitted changes are present.
-
-error: Unable to fully sync the tree
-error: Updating local project lists failed.
-Try re-running with "-j1 --fail-fast" to exit at the first error.
-================================================================================
-Repo command failed due to the following `SyncError` errors:
-error: device/linaro/hikey-kernel: Cannot remove project: uncommitted changes are present.
-
