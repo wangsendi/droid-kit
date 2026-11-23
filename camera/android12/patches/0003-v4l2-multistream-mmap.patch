@@ -1,7 +1,7 @@
-diff --git a/modules/camera/3_4/v4l2_camera.cpp b/modules/camera/3_4/v4l2_camera.cpp
+diff --git a/hardware/libhardware/modules/camera/3_4/v4l2_camera.cpp b/hardware/libhardware/modules/camera/3_4/v4l2_camera.cpp
 index 99b7a935..846a0dcb 100644
---- a/modules/camera/3_4/v4l2_camera.cpp
-+++ b/modules/camera/3_4/v4l2_camera.cpp
+--- a/hardware/libhardware/modules/camera/3_4/v4l2_camera.cpp
++++ b/hardware/libhardware/modules/camera/3_4/v4l2_camera.cpp
 @@ -220,12 +220,12 @@ bool V4L2Camera::enqueueRequestBuffers() {
    // settings are used for a buffer unless we were to enqueue them
    // one at a time, which would be too slow.
@@ -92,10 +92,10 @@ index 99b7a935..846a0dcb 100644
    return true;
  }
  
-diff --git a/modules/camera/3_4/v4l2_wrapper.cpp b/modules/camera/3_4/v4l2_wrapper.cpp
+diff --git a/hardware/libhardware/modules/camera/3_4/v4l2_wrapper.cpp b/hardware/libhardware/modules/camera/3_4/v4l2_wrapper.cpp
 index bee7855f..554f9dbe 100644
---- a/modules/camera/3_4/v4l2_wrapper.cpp
-+++ b/modules/camera/3_4/v4l2_wrapper.cpp
+--- a/hardware/libhardware/modules/camera/3_4/v4l2_wrapper.cpp
++++ b/hardware/libhardware/modules/camera/3_4/v4l2_wrapper.cpp
 @@ -25,6 +25,7 @@
  
  #include <android-base/unique_fd.h>
@@ -384,10 +384,10 @@ index bee7855f..554f9dbe 100644
  }
  
  int V4L2Wrapper::GetInFlightBufferCount() {
-diff --git a/modules/camera/3_4/v4l2_wrapper.h b/modules/camera/3_4/v4l2_wrapper.h
+diff --git a/hardware/libhardware/modules/camera/3_4/v4l2_wrapper.h b/hardware/libhardware/modules/camera/3_4/v4l2_wrapper.h
 index 2682ce7d..f90c1e37 100644
---- a/modules/camera/3_4/v4l2_wrapper.h
-+++ b/modules/camera/3_4/v4l2_wrapper.h
+--- a/hardware/libhardware/modules/camera/3_4/v4l2_wrapper.h
++++ b/hardware/libhardware/modules/camera/3_4/v4l2_wrapper.h
 @@ -101,6 +101,8 @@ class V4L2Wrapper {
    int IoctlLocked(unsigned long request, T data);
    // Request/release userspace buffer mode via VIDIOC_REQBUFS.
