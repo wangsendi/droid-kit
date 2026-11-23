@@ -13,7 +13,7 @@
 | 机型指纹     | PlayIntegrityFix（x86_64）+ 启动参数 |
 | Root 隐藏    | Shamiko                            |
 | 应用列表隐藏 | HMA-OSS（Zygisk 版，无需 LSPosed） |
-| 摄像头       | ReCam（需已有相机）/ Android 12 V4L2（见 docs/CAMERA-ANDROID12.md） |
+| 摄像头       | ReCam（需已有相机）/ Android 12 V4L2（已实测，见 docs/CAMERA-ANDROID12.md） |
 | WiFi         | Waydroid Network Spoof（Xposed，需 LSPosed） |
 | GPS          | GPS Setter（Xposed，需 LSPosed）   |
 | 传感器       | FakeSensor（Xposed，需 LSPosed）   |
