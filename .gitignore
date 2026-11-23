@@ -19,3 +19,4 @@ data/
 
 # 测试截图
 /screen*.png
+camera/android12/*.log
