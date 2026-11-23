@@ -36,16 +36,36 @@ mkdir -p .repo/local_manifests
 cat > .repo/local_manifests/remove-heavy.xml <<'XML'
 <?xml version="1.0" encoding="UTF-8"?>
 <manifest>
+  <remove-project name="device/amlogic/yukawa-kernel" />
+  <remove-project name="device/google/barbet-kernel" />
+  <remove-project name="device/google/bonito-kernel" />
+  <remove-project name="device/google/coral-kernel" />
+  <remove-project name="device/google/crosshatch-kernel" />
+  <remove-project name="device/google/cuttlefish_prebuilts" />
+  <remove-project name="device/google/redbull-kernel" />
+  <remove-project name="device/google/sunfish-kernel" />
+  <remove-project name="device/linaro/dragonboard-kernel" />
+  <remove-project name="device/linaro/hikey-kernel" />
+  <remove-project name="device/linaro/poplar-kernel" />
+  <remove-project name="device/ti/beagle-x15-kernel" />
+  <remove-project name="platform/cts" />
   <remove-project name="platform/external/noto-fonts" />
   <remove-project name="platform/external/openscreen" />
-  <remove-project name="platform/cts" />
   <remove-project name="platform/packages/apps/TV" />
   <remove-project name="platform/packages/modules/ArtPrebuilt" />
   <remove-project name="platform/packages/modules/BootPrebuilt/5.4/arm64" />
   <remove-project name="platform/prebuilts/clang/host/darwin-x86" />
-  <remove-project name="platform/device/google/barbet-kernel" />
-  <remove-project name="platform/device/google/coral-kernel" />
-  <remove-project name="platform/device/google/crosshatch-kernel" />
+  <remove-project name="platform/prebuilts/qemu-kernel" />
+  <remove-project name="platform/test/vts-testcase/kernel" />
+  <remove-project name="platform/external/grpc-grpc" />
+  <remove-project name="platform/external/grpc-grpc-java" />
+  <remove-project name="platform/external/libabigail" />
+  <remove-project name="platform/external/deqp" />
+  <remove-project name="platform/external/autotest" />
+  <remove-project name="platform/external/libtextclassifier" />
+  <remove-project name="platform/external/linux-kselftest" />
+  <remove-project name="platform/external/llvm" />
+  <remove-project name="toolchain/llvm-project" />
 </manifest>
 XML
 

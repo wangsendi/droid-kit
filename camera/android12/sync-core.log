@@ -1,0 +1,31 @@
+error.GitError: Cannot checkout platform/prebuilts/jdk/jdk11: Cannot initialize work tree for platform/prebuilts/jdk/jdk11
+error: device/linaro/hikey-kernel: Cannot remove project: uncommitted changes are present.
+
+error: Unable to fully sync the tree
+error: Downloading network changes failed.
+Failing repos (network):
+prebuilts/clang/host/linux-x86
+prebuilts/sdk
+system/core
+system/hardware/interfaces
+system/logging
+system/media
+system/tools/hidl
+error: Updating local project lists failed.
+error: Checking out local projects failed.
+Failing repos (checkout):
+prebuilts/jdk/jdk11
+Try re-running with "-j1 --fail-fast" to exit at the first error.
+================================================================================
+Repo command failed due to the following `SyncError` errors:
+Cannot initialize work tree for platform/prebuilts/jdk/jdk11
+GitCommandError: 'fetch --filter=blob:limit=20M --no-auto-gc --quiet aosp --prune --recurse-submodules=no --no-tags tag android-12.0.0_r34 +refs/tags/android-12.0.0_r34:refs/tags/android-12.0.0_r34' on platform/prebuilts/sdk failed
+stdout: fatal: unable to access 'https://android.googlesource.com/platform/prebuilts/sdk/': gnutls_handshake() failed: The TLS connection was non-properly terminated.
+GitCommandError: 'fetch --filter=blob:limit=20M --no-auto-gc --quiet aosp --prune --recurse-submodules=no --no-tags tag android-12.0.0_r34 +refs/tags/android-12.0.0_r34:refs/tags/android-12.0.0_r34' on platform/system/core failed
+stdout: fatal: unable to access 'https://android.googlesource.com/platform/system/core/': gnutls_handshake() failed: The TLS connection was non-properly terminated.
+GitCommandError: 'fetch --filter=blob:limit=20M --no-auto-gc --quiet aosp --prune --recurse-submodules=no --no-tags tag android-12.0.0_r34 +refs/tags/android-12.0.0_r34:refs/tags/android-12.0.0_r34' on platform/system/hardware/interfaces failed
+stdout: fatal: unable to access 'https://android.googlesource.com/platform/system/hardware/interfaces/': gnutls_handshake() failed: The TLS connection was non-properly terminated.
+GitCommandError: 'fetch --filter=blob:limit=20M --no-auto-gc --quiet aosp --prune --recurse-submodules=no --no-tags tag android-12.0.0_r34 +refs/tags/android-12.0.0_r34:refs/tags/android-12.0.0_r34' on platform/system/logging failed
+stdout: fatal: unable to access 'https://android.googlesource.com/platform/system/logging/': gnutls_handshake() failed: The TLS connection was non-properly terminated.
++4 additional errors...
+core_exit=1
