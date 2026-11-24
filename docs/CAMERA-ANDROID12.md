@@ -181,7 +181,8 @@ ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 \
 
 ```bash
 cd camera/android12
-PORT=5556 ./run.sh
+# 当前保留的是第 9 节的 5557 双摄容器；下面只是单摄模式的示例端口
+PORT=5558 ./run.sh
 ```
 
 `run.sh` 使用 `docker create` + `docker cp` 注入，**不要用 `-v` 挂不存在的
@@ -197,7 +198,7 @@ PORT=5556 ./run.sh
 ## 5. 验证
 
 ```bash
-PORT=5556 camera/verify/verify-camera.sh
+PORT=5557 camera/verify/verify-camera.sh
 ```
 
 关键输出：
@@ -301,8 +302,8 @@ docker start droid-kit-12-img
 
 ## 9. 双摄 + 多分辨率 + 元数据一致性（5557）
 
-在原有单后摄方案之上又做了一轮升级，运行在 `droid-kit-12-cam2`（5557），
-不影响原来的 5556 容器。
+在原有单后摄方案之上又做了一轮升级，运行在 `droid-kit-12-cam2`（5557）。
+旧的单后摄 5556 容器已清理，当前只保留 5557。
 
 ### 9.1 Host：两个 v4l2loopback
 
@@ -382,7 +383,7 @@ front frame size=640x480 ... vfc=17
 
 ### 9.5 说明
 
-- 5557 是双摄/多分辨率版本；5556 仍保留为单后摄回退。
+- 当前只保留 5557 双摄/多分辨率容器；旧的 5556 单后摄容器已清理。
 - WebView 125 仍使用 Camera2，所以 label 前缀是 `camera2`：
   后摄 `camera2 0, facing back`，前摄 `camera2 1, facing front`。
 - 这个升级仍是“虚拟摄像头”，不解决 redroid/环境指纹；只是让相机功能更完整、

@@ -101,11 +101,11 @@ container still starts and exposes one camera.
 ## Run
 
 ```bash
-# single back camera (fallback container, 5556)
-PORT=5556 ./run.sh
-
-# dual camera + 640x480/1280x720/1920x1080 metadata (5557)
+# current setup: dual camera + 640x480/1280x720/1920x1080 metadata
 PORT=5557 ./run-5557.sh
+
+# single-camera mode (only /dev/video10 fed): any free port
+PORT=5558 ./run.sh
 ```
 
 `run.sh` uses `docker create` + `docker cp` (not `-v`) and sets
