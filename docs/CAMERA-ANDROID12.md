@@ -261,7 +261,7 @@ API2 camera characteristics:
 | `generated preview size list is empty` | 缺 media profiles | 确认 `/system/etc/media_profiles_V1_0.xml` 存在 |
 | 有 track 但黑屏/无帧 | 未应用 `0003` 的每路转换或 STREAMON 幂等 | 看 `logcat -s V4L2Wrapper V4L2Camera` |
 | 浏览器 label 带 `camera2` 前缀 | Android 12 Chromium 使用 Camera2 API | 正常；facing 为 `back` 即符合要求 |
-| Android 13 上失败 | HIDL/VINTF 变化 | 本方案只针对 Android 12 |
+| 其他 Android 版本上失败 | HIDL/VINTF 变化 | 本方案只针对 Android 12 |
 
 ## 7. 可复现性
 

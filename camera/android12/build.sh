@@ -71,7 +71,8 @@ done
 
 build() {
   local script=$1
-  if [[ -n "$BUILDER" ]] && docker inspect "$BUILDER" >/dev/null 2>&1; then
+  if [[ -n "$BUILDER" ]] && \
+     docker inspect -f '{{.State.Running}}' "$BUILDER" 2>/dev/null | grep -qx true; then
     docker exec "$BUILDER" bash "/camera/$script"
   else
     AOSP="$AOSP_DIR" OUT="$OUT" bash "$repo_dir/$script"

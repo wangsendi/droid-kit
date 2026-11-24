@@ -1,27 +1,71 @@
-# droid-kit Android 12 camera variant.
+# Android 12 reDroid + camera.v4l2 + Magisk/Xposed modules.
 #
-# The Redroid image is an Android rootfs without /bin/sh, so all chmod/property
-# work happens in a Debian prep stage. The final stage is copy-only, matching
-# the main droid-kit Dockerfile.
+# Merge of Dockerfile.android12-camera (camera HAL/provider injection) and the
+# Android 13 anti-detection stack (Magisk, Zygisk, preloaded modules, ReCam).
+# The module set is the same modules/ + recam/ + docker/ assets used by the
+# Android 13 image.
 ARG BASE_IMAGE=redroid/redroid:12.0.0_64only-latest
 
 FROM ${BASE_IMAGE} AS base
 
+# ---------------------------------------------------------------- 打包阶段
 FROM debian:bookworm-slim AS prep
 
-# provider service + HAL + provider rc + provider/device impl libs
+ARG TARGETARCH
+ARG MAGISK_APK_MD5=10304bbeddb6e1bbc7040fc7ec133178
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl ca-certificates libarchive-tools gzip \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+COPY docker/Magisk-v31.1.apk magisk.apk
+RUN echo "${MAGISK_APK_MD5}  magisk.apk" | md5sum -c - \
+ && mkdir unpack && bsdtar -xf magisk.apk -C unpack
+
+RUN case "${TARGETARCH}" in \
+      arm64) abi=arm64-v8a ;; \
+      amd64) abi=x86_64 ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+ && mkdir -p /staged/system/etc/init/magisk /staged/sbin \
+ && for f in unpack/lib/"${abi}"/lib*.so; do \
+      n=$(basename "${f}"); n=${n#lib}; n=${n%.so}; \
+      cp "${f}" "/staged/system/etc/init/magisk/${n}"; \
+      chmod 0755 "/staged/system/etc/init/magisk/${n}"; \
+    done \
+ && cp magisk.apk /staged/system/etc/init/magisk/magisk.apk
+
+RUN bsdtar -xf magisk.apk -C unpack assets/util_functions.sh \
+ && mkdir -p /staged/cache/data_adb/magisk \
+ && cp unpack/assets/util_functions.sh /staged/cache/data_adb/magisk/util_functions.sh \
+ && cp unpack/assets/util_functions.sh /staged/system/etc/init/magisk/util_functions.sh \
+ && cp /staged/system/etc/init/magisk/busybox /staged/cache/data_adb/magisk/busybox \
+ && chmod 0755 /staged/cache/data_adb/magisk/busybox
+
+COPY docker/bootanim.rc docker/bootanim-original.rc /staged/system/etc/init/
+RUN gzip -9 -c /staged/system/etc/init/bootanim-original.rc > /staged/system/etc/init/bootanim.rc.gz \
+ && rm /staged/system/etc/init/bootanim-original.rc
+
+COPY docker/droid-kit-setup.sh /staged/system/bin/droid-kit-setup
+COPY docker/xposed-modules.conf /staged/system/etc/droid-kit/xposed-modules.conf
+COPY docker/hidemydevice-ids.xml docker/telephonyspoofer-config.xml /staged/system/etc/droid-kit/
+RUN chmod 0755 /staged/system/bin/droid-kit-setup
+
+COPY docker/prepare-modules.sh /tmp/prepare-modules.sh
+COPY modules/ /tmp/modules/
+RUN sh /tmp/prepare-modules.sh /tmp/modules /staged
+
+COPY recam/ /staged/system/etc/recam/
+RUN chmod 0755 /staged/system/etc/recam/recam
+
+# ---------------------------------------------------------------- camera HAL
 COPY camera/android12/vendor/ /staged/vendor/
-
-# VINTF fragment (merged with the base manifest; no full manifest replacement)
 COPY camera/android12/files/manifest-camera.xml /staged/vendor/etc/vintf/manifest/manifest-camera.xml
-
-# linker namespace workaround for the legacy HAL
 COPY camera/android12/files/camera-ns-fix.rc /staged/vendor/etc/init/camera-ns-fix.rc
-
-# Camera1 shim needs video encoder caps to pick a preview size
 COPY camera/android12/files/media_profiles_V1_0.xml /staged/system/etc/media_profiles_V1_0.xml
 
-# Take the base build.prop files and add ro.hardware.camera before boot.
 COPY --from=base /vendor/build.prop /staged/vendor/build.prop
 COPY --from=base /system/build.prop /staged/system/build.prop
 
@@ -32,22 +76,28 @@ RUN set -e; \
     chmod 0644 /staged/vendor/etc/init/android.hardware.camera.provider@2.4-service_64.rc; \
     chmod 0644 /staged/vendor/etc/init/camera-ns-fix.rc; \
     for f in /staged/vendor/build.prop /staged/system/build.prop; do \
-      if [ -L "$f" ]; then \
-        cp --dereference "$f" "$f.tmp"; \
-        mv "$f.tmp" "$f"; \
-      fi; \
-      if ! grep -q '^ro.hardware.camera=' "$f"; then \
-        echo 'ro.hardware.camera=v4l2' >> "$f"; \
-      fi; \
-      if ! grep -q '^ro.hardware.gralloc=' "$f"; then \
-        echo 'ro.hardware.gralloc=v4l2' >> "$f"; \
-      fi; \
+      if [ -L "$f" ]; then cp --dereference "$f" "$f.tmp"; mv "$f.tmp" "$f"; fi; \
+      if ! grep -q '^ro.hardware.camera=' "$f"; then echo 'ro.hardware.camera=v4l2' >> "$f"; fi; \
+      if ! grep -q '^ro.hardware.gralloc=' "$f"; then echo 'ro.hardware.gralloc=v4l2' >> "$f"; fi; \
     done
 
+# ---------------------------------------------------------------- 静态 SQLite 工具
+FROM debian:bookworm-slim AS tool
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libc6-dev libsqlite3-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY docker/sqlrun.c /sqlrun.c
+RUN gcc -O2 -static -o /sqlrun /sqlrun.c -lsqlite3 -lpthread -ldl -lm \
+ && chmod 0755 /sqlrun
+
+# ---------------------------------------------------------------- 最终镜像
 FROM base
 
 COPY --from=prep /staged/ /
+COPY --from=tool /sqlrun /system/etc/droid-kit/sqlrun
 
-LABEL org.opencontainers.image.title="droid-kit-camera" \
-      org.opencontainers.image.description="Redroid Android 12 with legacy camera.v4l2 HAL and HIDL 2.4 camera provider" \
+LABEL org.opencontainers.image.title="droid-kit-12-camera" \
+      org.opencontainers.image.description="Android 12 reDroid with legacy camera.v4l2 HAL, Magisk (Zygisk) and anti-detection modules" \
       org.opencontainers.image.source="https://github.com/wangsendi/droid-kit"

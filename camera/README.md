@@ -1,26 +1,12 @@
-# Camera support
+# Camera support — Android 12 legacy V4L2
 
-Two independent paths live here:
+- `camera/android12/` — builds `camera.v4l2.so` + YUV gralloc + HIDL 2.4
+  provider staging, patches, and the runtime injection scripts (`run.sh`,
+  `run-5557.sh`).
+- `camera/host/` — creates two v4l2loopback devices (`video10` back,
+  `video11` front) and feeds them with ffmpeg.
+- `camera/verify/` — `verify-camera.sh`, `verify-metadata.sh`, and the
+  WebView `camtest` app (back/front + explicit sizes).
 
-1. **Android 12 legacy V4L2 HAL** (`camera/android12/`)
-   - Implements `docs/安卓12方案.md`.
-   - Builds `camera.v4l2.so` + HIDL 2.4 provider from AOSP 12.
-   - Runtime injection via `run.sh` (`docker cp`, no rebuild).
-   - Best for a browser `getUserMedia` device that looks like a normal
-     back-facing camera.
-
-2. **Android 13 external camera provider** (planned/optional)
-   - Official AOSP path for USB UVC webcams.
-   - Accepts MJPEG, supports hotplug.
-   - Not implemented in this directory yet; the Android 12 path is the
-     requested primary route.
-
-Host-side helpers:
-
-```text
-camera/host/setup-v4l2loopback.sh   # create /dev/videoN
-camera/host/feed.sh                 # feed file/URL/camera into it
-camera/verify/verify-camera.sh      # adb checks + browser snippet
-```
-
-Start with `camera/android12/README.md`.
+Start with `camera/android12/README.md`; full design and troubleshooting are in
+`docs/CAMERA-ANDROID12.md`.
