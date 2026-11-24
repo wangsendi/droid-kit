@@ -13,6 +13,7 @@ files="$repo_dir/files"
 
 BASE_IMAGE=${BASE_IMAGE:-redroid/redroid:12.0.0_64only-latest}
 VIDEO_DEV=${VIDEO_DEV:-/dev/video10}
+VIDEO_DEV2=${VIDEO_DEV2:-/dev/video11}
 NAME=${NAME:-droid-kit-12-cam}
 PORT=${PORT:-5555}
 WIDTH=${WIDTH:-1080}
@@ -29,9 +30,24 @@ die() { echo "error: $*" >&2; exit 1; }
 "$repo_dir/check-artifacts.sh"
 
 docker rm -f "$NAME" >/dev/null 2>&1 || true
-echo "Creating $NAME ($BASE_IMAGE), $VIDEO_DEV -> /dev/video0"
+
+# Back camera is required, front camera is optional so a single-device setup
+# (only /dev/video10) keeps working. Container /dev/video0 -> camera 0 and
+# /dev/video1 -> camera 1, matching the HAL's sorted enumeration.
+device_args=(--device "$VIDEO_DEV:/dev/video0")
+mapping="$VIDEO_DEV -> /dev/video0 (camera 0, back)"
+if [[ "$VIDEO_DEV2" != "$VIDEO_DEV" && -e "$VIDEO_DEV2" ]]; then
+  device_args+=(--device "$VIDEO_DEV2:/dev/video1")
+  mapping+=", $VIDEO_DEV2 -> /dev/video1 (camera 1, front)"
+elif [[ "$VIDEO_DEV2" == "$VIDEO_DEV" ]]; then
+  echo "note: VIDEO_DEV2=$VIDEO_DEV2 equals VIDEO_DEV; exposing only the back camera (camera 0)" >&2
+else
+  echo "note: $VIDEO_DEV2 not found; exposing only the back camera (camera 0)" >&2
+fi
+
+echo "Creating $NAME ($BASE_IMAGE), $mapping"
 docker create --name "$NAME" --privileged \
-  --device "$VIDEO_DEV:/dev/video0" \
+  "${device_args[@]}" \
   -p "$PORT:5555" \
   "$BASE_IMAGE" \
   "androidboot.redroid_width=$WIDTH" \

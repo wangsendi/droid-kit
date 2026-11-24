@@ -110,9 +110,9 @@ HAL 链接的是 reDroid 12 系统里的库（`$AOSP_DIR/rd12libs`，由镜像�
 
 | 补丁 | 作用 |
 |---|---|
-| `0001-v4l2-report-back-camera.patch` | `LENS_FACING_EXTERNAL` → `BACK`，光圈/焦距改为手机常见值 |
-| `0002-v4l2-hal-name.patch` | 去掉 HAL 模块名里的 V4L2/AOSP 字样 |
-| `0003-v4l2-multistream-mmap.patch` | 多 stream 支持、每路输出转换、MMAP 回退、STREAMON 幂等、放宽 request settings |
+| `0001-v4l2-metadata-consistency.patch` | `is_front` 控制 BACK/FRONT；distortion correction；LED/flash 一致；固定对焦；1920x1080 sensor array；合法缩略图列表；光圈/焦距 |
+| `0002-v4l2-dual-camera.patch` | 节点排序、双摄枚举（0 后摄 / 1 前摄）、模块名清理 |
+| `0003-v4l2-multistream-mmap-multires.patch` | 多 stream 转换、MMAP 回退、STREAMON 幂等、放宽 settings、640x480/1280x720/1920x1080 缩放、`is_front` 传递 |
 | `0004-gralloc-yuv.patch` | 软件 gralloc 支持 YUV_420_888/YV12/NV21/YUYV + `lock_ycbcr` |
 
 `0003` 解决的实际问题：
@@ -297,3 +297,93 @@ docker start droid-kit-12-img
 
 > 这个变体会在 Redroid 12 之上增加一层很小的文件层；如果坚持“完全不重打包”，
 > 用 `run.sh` 的运行期注入方式即可，两者产物一致。
+
+
+## 9. 双摄 + 多分辨率 + 元数据一致性（5557）
+
+在原有单后摄方案之上又做了一轮升级，运行在 `droid-kit-12-cam2`（5557），
+不影响原来的 5556 容器。
+
+### 9.1 Host：两个 v4l2loopback
+
+```bash
+camera/host/setup-v4l2loopback.sh     # devices=2 video_nr=10,11
+camera/host/feed.sh /path/to/back.mp4 # VIDEO_NR=10
+VIDEO_NR=11 camera/host/feed.sh /path/to/front.mp4
+```
+
+`exclusive_caps=1`，所以前摄/后摄都必须在启动容器前喂流；否则没喂的那个不会
+报告 capture 能力。
+
+### 9.2 启动 5557
+
+```bash
+cd camera/android12
+PORT=5557 ./run-5557.sh
+```
+
+映射：
+
+```text
+host /dev/video10 -> /dev/video0  camera 0, back
+host /dev/video11 -> /dev/video1  camera 1, front
+```
+
+### 9.3 元数据修复
+
+- 2 台设备：id 0 `Facing: Back`，id 1 `Facing: Front`
+- `ANDROID_DISTORTION_CORRECTION_AVAILABLE_MODES = {OFF}`
+- `FLASH_INFO_AVAILABLE = FALSE`，`LED_AVAILABLE_LEDS` 真正为空（不再误报 TRANSMIT）
+- `SENSOR_INFO_PIXEL_ARRAY_SIZE` / `ACTIVE_ARRAY_SIZE` = 1920x1080，
+  `PHYSICAL_SIZE` = 5.76x3.24 mm
+- `JPEG_AVAILABLE_THUMBNAIL_SIZES` 4 个 int（两对 0x0）
+- 固定对焦：AF 仅 OFF，最小对焦距离 0
+- 输出尺寸：640x480 / 1280x720 / 1920x1080
+- 设备仍为 `INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED`（一致的无闪光/固定对焦档位比
+  虚假的 FULL 更稳）
+
+### 9.4 验证结果
+
+```bash
+PORT=5557 camera/verify/verify-camera.sh
+PORT=5557 camera/verify/verify-metadata.sh
+```
+
+`verify-metadata.sh` 实测 `13 passed, 0 failed`：
+
+```text
+PASS  camera count is 2
+PASS  API1 facing Back present
+PASS  API1 facing Front present
+PASS  distortionCorrection.availableModes contains OFF
+PASS  flash.info.available is FALSE
+PASS  led.availableLeds has no TRANSMIT (empty list)
+PASS  sensor.info.pixelArraySize is 1920 1080
+PASS  sensor.info.activeArraySize ends with 1920 1080
+PASS  jpeg.availableThumbnailSizes has 4 values
+PASS  stream config 640x480 present
+PASS  stream config 1280x720 present
+PASS  stream config 1920x1080 present
+```
+
+WebView（camtest）实测：
+
+```text
+back label=camera2 0, facing back
+back1080 label=camera2 0, facing back
+front label=camera2 1, facing front
+front1080 label=camera2 1, facing front
+back frame size=640x480 ... vfc=16
+front frame size=640x480 ... vfc=17
+```
+
+系统相机 App 拍照在 5557 上生成了 1920x1080 JPEG，说明多分辨率 + 1080p
+缩放 + JPEG BLOB 路径都正常。
+
+### 9.5 说明
+
+- 5557 是双摄/多分辨率版本；5556 仍保留为单后摄回退。
+- WebView 125 仍使用 Camera2，所以 label 前缀是 `camera2`：
+  后摄 `camera2 0, facing back`，前摄 `camera2 1, facing front`。
+- 这个升级仍是“虚拟摄像头”，不解决 redroid/环境指纹；只是让相机功能更完整、
+  元数据更自洽。

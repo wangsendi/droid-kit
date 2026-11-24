@@ -1,0 +1,101 @@
+diff --git a/hardware/libhardware/modules/camera/3_4/v4l2_camera_hal.cpp b/hardware/libhardware/modules/camera/3_4/v4l2_camera_hal.cpp
+index 17fac1a8..19c5a7c9 100644
+--- a/hardware/libhardware/modules/camera/3_4/v4l2_camera_hal.cpp
++++ b/hardware/libhardware/modules/camera/3_4/v4l2_camera_hal.cpp
+@@ -31,7 +31,9 @@
+ 
+ #include <algorithm>
+ #include <cstdlib>
++#include <string>
+ #include <unordered_set>
++#include <vector>
+ 
+ #include <android-base/parseint.h>
+ 
+@@ -48,6 +50,31 @@
+ 
+ namespace v4l2_camera_hal {
+ 
++namespace {
++
++// Returns the numeric suffix of a /dev/videoN path, or -1 if it has none.
++int VideoNodeNumber(const std::string& node) {
++  size_t last_digit = node.find_last_not_of("0123456789");
++  if (last_digit == std::string::npos || last_digit + 1 == node.size()) {
++    return -1;
++  }
++  return std::atoi(node.c_str() + last_digit + 1);
++}
++
++// Orders /dev/videoN nodes numerically (video2 before video10) so that the
++// camera id assignment does not depend on readdir() order. With one back and
++// one front node this makes /dev/video0 -> id 0 and /dev/video1 -> id 1.
++bool CompareVideoNodes(const std::string& a, const std::string& b) {
++  const int a_num = VideoNodeNumber(a);
++  const int b_num = VideoNodeNumber(b);
++  if (a_num != b_num) {
++    return a_num < b_num;
++  }
++  return a < b;
++}
++
++}  // namespace
++
+ // Default global camera hal.
+ static V4L2CameraHAL gCameraHAL;
+ 
+@@ -74,12 +101,17 @@ V4L2CameraHAL::V4L2CameraHAL() : mCameras(), mCallbacks(NULL) {
+       }
+     }
+   }
++  closedir(dir);
++  // Sort so enumeration and camera ids are deterministic and do not depend on
++  // readdir() order. Node 0 is the back camera, node 1 the front camera.
++  std::sort(nodes.begin(), nodes.end(), CompareVideoNodes);
++  HAL_LOGV("Found %zu video node(s).", nodes.size());
++
+   // Test each for V4L2 support and uniqueness.
+   std::unordered_set<std::string> buses;
+   std::string bus;
+   v4l2_capability cap;
+   int fd;
+-  int id = 0;
+   for (const auto& node : nodes) {
+     // Open the node.
+     fd = TEMP_FAILURE_RETRY(open(node.c_str(), O_RDWR));
+@@ -98,9 +130,15 @@ V4L2CameraHAL::V4L2CameraHAL() : mCameras(), mCallbacks(NULL) {
+       bus = reinterpret_cast<char*>(cap.bus_info);
+       if (buses.insert(bus).second) {
+         HAL_LOGV("Found unique bus at %s.", node.c_str());
+-        std::unique_ptr<V4L2Camera> cam(V4L2Camera::NewV4L2Camera(id++, node));
++        // Keep ids dense even if a camera fails to initialize.
++        const int id = static_cast<int>(mCameras.size());
++        // Camera 0 is the back camera, camera 1 the front camera.
++        std::unique_ptr<V4L2Camera> cam(
++            V4L2Camera::NewV4L2Camera(id, node, id == 1));
+         if (cam) {
+           mCameras.push_back(std::move(cam));
++          HAL_LOGI("Camera %d: %s%s.", id, node.c_str(),
++                   id == 1 ? " (front)" : " (back)");
+         } else {
+           HAL_LOGE("Failed to initialize camera at %s.", node.c_str());
+         }
+@@ -108,6 +146,7 @@ V4L2CameraHAL::V4L2CameraHAL() : mCameras(), mCallbacks(NULL) {
+     }
+     close(fd);
+   }
++  HAL_LOGI("Detected %zu camera(s).", mCameras.size());
+ }
+ 
+ V4L2CameraHAL::~V4L2CameraHAL() {
+@@ -225,8 +264,8 @@ camera_module_t HAL_MODULE_INFO_SYM __attribute__((visibility("default"))) = {
+             .module_api_version = CAMERA_MODULE_API_VERSION_2_4,
+             .hal_api_version = HARDWARE_HAL_API_VERSION,
+             .id = CAMERA_HARDWARE_MODULE_ID,
+-            .name = "V4L2 Camera HAL v3",
+-            .author = "The Android Open Source Project",
++            .name = "Camera HAL v3",
++            .author = "Google",
+             .methods = &v4l2_module_methods,
+             .dso = nullptr,
+             .reserved = {0},

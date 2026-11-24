@@ -3,8 +3,9 @@
 #
 # Examples:
 #   ./feed.sh video.mp4
+#   VIDEO_NR=11 ./feed.sh front.mp4          # front camera (default 10 = back)
 #   INPUT_FORMAT=mjpeg ./feed.sh http://192.168.1.20:8080/video
-#   INPUT_FORMAT=v4l2 INPUT_DEVICE=/dev/video2 ./feed.sh
+#   VIDEO_NR=11 INPUT_FORMAT=v4l2 INPUT_DEVICE=/dev/video2 ./feed.sh
 set -euo pipefail
 
 VIDEO_NR=${VIDEO_NR:-10}

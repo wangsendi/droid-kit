@@ -1,8 +1,237 @@
+diff --git a/hardware/libhardware/modules/camera/3_4/format_metadata_factory.cpp b/hardware/libhardware/modules/camera/3_4/format_metadata_factory.cpp
+index 3469b069..dc3b10bd 100644
+--- a/hardware/libhardware/modules/camera/3_4/format_metadata_factory.cpp
++++ b/hardware/libhardware/modules/camera/3_4/format_metadata_factory.cpp
+@@ -64,6 +64,19 @@ static int FpsRangesCompare(std::array<int32_t, 2> a,
+   return a[1] > b[1];
+ }
+ 
++// Output sizes advertised for every supported format. The V4L2 device captures
++// at a single native size and CachedFrame::Convert scales each frame to the
++// requested output size (droid-kit). Sizes are listed largest first, as usual
++// for ANDROID_SCALER_AVAILABLE_STREAM_CONFIGURATIONS.
++static const int32_t kCommonFrameSizes[][2] = {
++    {1920, 1080},  // HD1080
++    {1280, 720},   // HD
++    {640, 480},    // VGA
++};
++
++// Frame duration assumed when the device does not report one (30 fps).
++static const int64_t kDefaultFrameDurationNs = 33333333;
++
+ int AddFormatComponents(
+     std::shared_ptr<V4L2Wrapper> device,
+     std::insert_iterator<PartialMetadataSet> insertion_point) {
+@@ -175,8 +188,31 @@ int AddFormatComponents(
+       HAL_LOGE("Failed to get all frame sizes for format %d", v4l2_format);
+       return res;
+     }
++    if (frame_sizes.empty()) {
++      HAL_LOGW("No frame sizes reported for format %d, skipping.", v4l2_format);
++      continue;
++    }
+ 
+-    for (const auto& frame_size : frame_sizes) {
++    // The device captures at one of the sizes it reports; the sizes advertised
++    // below are produced from that frame by CachedFrame::Convert, so they all
++    // inherit the capture frame rate (droid-kit).
++    std::array<int32_t, 2> capture_size;
++    std::array<int64_t, 2> duration_range;
++    int64_t min_frame_duration = kDefaultFrameDurationNs;
++    int64_t max_frame_duration = kDefaultFrameDurationNs;
++    if (StreamFormat::GetPreferredCaptureSize(frame_sizes, &capture_size) &&
++        device->GetFormatFrameDurationRange(
++            v4l2_format, capture_size, &duration_range) == 0 &&
++        duration_range[0] > 0 && duration_range[1] > 0) {
++      min_frame_duration = std::min(duration_range[0], duration_range[1]);
++      max_frame_duration = std::max(duration_range[0], duration_range[1]);
++    } else {
++      HAL_LOGW(
++          "Failed to get frame duration range for format %d, assuming 30 fps.",
++          v4l2_format);
++    }
++
++    for (const auto& frame_size : kCommonFrameSizes) {
+       // Note the format and size combination in stream configs.
+       stream_configs.push_back(
+           {{hal_format,
+@@ -184,25 +220,8 @@ int AddFormatComponents(
+             frame_size[1],
+             ANDROID_SCALER_AVAILABLE_STREAM_CONFIGURATIONS_OUTPUT}});
+ 
+-      // Find the duration range for this format and size.
+-      std::array<int64_t, 2> duration_range;
+-      res = device->GetFormatFrameDurationRange(
+-          v4l2_format, frame_size, &duration_range);
+-      if (res) {
+-        HAL_LOGE(
+-            "Failed to get frame duration range for format %d, "
+-            "size %u x %u",
+-            v4l2_format,
+-            frame_size[0],
+-            frame_size[1]);
+-        return res;
+-      }
+-      int64_t size_min_frame_duration = duration_range[0];
+-      int64_t size_max_frame_duration = duration_range[1];
+-      min_frame_durations.push_back({{hal_format,
+-                                      frame_size[0],
+-                                      frame_size[1],
+-                                      size_min_frame_duration}});
++      min_frame_durations.push_back(
++          {{hal_format, frame_size[0], frame_size[1], min_frame_duration}});
+ 
+       // Note the stall duration for this format and size.
+       // Usually 0 for non-jpeg, non-zero for JPEG.
+@@ -213,31 +232,42 @@ int AddFormatComponents(
+       }
+       stall_durations.push_back(
+           {{hal_format, frame_size[0], frame_size[1], stall_duration}});
++    }
+ 
+-      // Update our search for general min & max frame durations.
+-      // In theory max frame duration (min frame rate) should be consistent
+-      // between all formats, but we check and only advertise the smallest
+-      // available max duration just in case.
+-      if (size_max_frame_duration < min_max_frame_duration) {
+-        min_max_frame_duration = size_max_frame_duration;
+-      }
+-      // ANDROID_CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES will contain all
+-      // the fps ranges for YUV_420_888 only since YUV_420_888 format is
+-      // the default camera format by Android.
+-      if (hal_format == HAL_PIXEL_FORMAT_YCbCr_420_888) {
+-        // Convert from frame durations measured in ns.
+-        // Min, max fps supported by all YUV formats.
+-        const int32_t min_fps = 1000000000 / size_max_frame_duration;
+-        const int32_t max_fps = 1000000000 / size_min_frame_duration;
+-        if (std::find(fps_ranges.begin(), fps_ranges.end(),
+-                      std::array<int32_t, 2>{min_fps, max_fps}) ==
+-            fps_ranges.end()) {
+-          fps_ranges.push_back({min_fps, max_fps});
+-        }
++    // Update our search for general min & max frame durations.
++    // In theory max frame duration (min frame rate) should be consistent
++    // between all formats, but we check and only advertise the smallest
++    // available max duration just in case.
++    if (max_frame_duration < min_max_frame_duration) {
++      min_max_frame_duration = max_frame_duration;
++    }
++    // ANDROID_CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES will contain all
++    // the fps ranges for YUV_420_888 only since YUV_420_888 format is
++    // the default camera format by Android.
++    if (hal_format == HAL_PIXEL_FORMAT_YCbCr_420_888) {
++      // Convert from frame durations measured in ns.
++      // Min, max fps supported by all YUV formats. Clamp to at least 1 fps,
++      // the minimum Android accepts in a target fps range.
++      const int32_t min_fps =
++          std::max(1, static_cast<int32_t>(1000000000LL / max_frame_duration));
++      const int32_t max_fps = std::max(
++          min_fps, static_cast<int32_t>(1000000000LL / min_frame_duration));
++      if (std::find(fps_ranges.begin(), fps_ranges.end(),
++                    std::array<int32_t, 2>{min_fps, max_fps}) ==
++          fps_ranges.end()) {
++        fps_ranges.push_back({min_fps, max_fps});
+       }
+     }
+   }
+ 
++  // Fall back to 30 fps if the device did not report any usable YUV sizes.
++  if (fps_ranges.empty()) {
++    fps_ranges.push_back({30, 30});
++  }
++  if (min_max_frame_duration == std::numeric_limits<int64_t>::max()) {
++    min_max_frame_duration = kDefaultFrameDurationNs;
++  }
++
+   // Sort fps ranges in descending order.
+   std::sort(fps_ranges.begin(), fps_ranges.end(), FpsRangesCompare);
+ 
+diff --git a/hardware/libhardware/modules/camera/3_4/stream_format.cpp b/hardware/libhardware/modules/camera/3_4/stream_format.cpp
+index 4a6231ab..2a7a4b2c 100644
+--- a/hardware/libhardware/modules/camera/3_4/stream_format.cpp
++++ b/hardware/libhardware/modules/camera/3_4/stream_format.cpp
+@@ -195,6 +195,28 @@ bool StreamFormat::FindFormatByResolution(const SupportedFormats& formats,
+   return false;
+ }
+ 
++bool StreamFormat::GetPreferredCaptureSize(
++    const std::set<std::array<int32_t, 2>>& sizes,
++    std::array<int32_t, 2>* out_size) {
++  if (!out_size || sizes.empty()) {
++    return false;
++  }
++
++  // The loopback device is fed at 1280x720, so prefer capturing at that size
++  // when the device reports it; other sizes may not match what the producer
++  // writes (droid-kit).
++  const std::array<int32_t, 2> preferred_size = {{1280, 720}};
++  auto it = sizes.find(preferred_size);
++  if (it != sizes.end()) {
++    *out_size = *it;
++    return true;
++  }
++
++  // Otherwise capture at the largest reported size to avoid upscaling.
++  *out_size = *sizes.rbegin();
++  return true;
++}
++
+ SupportedFormats StreamFormat::GetQualifiedFormats(
+     const SupportedFormats& supported_formats) {
+   // The preference of supported fourccs in the list is from high to low.
+diff --git a/hardware/libhardware/modules/camera/3_4/stream_format.h b/hardware/libhardware/modules/camera/3_4/stream_format.h
+index 3f0c5146..b4f872a6 100644
+--- a/hardware/libhardware/modules/camera/3_4/stream_format.h
++++ b/hardware/libhardware/modules/camera/3_4/stream_format.h
+@@ -17,7 +17,10 @@
+ #ifndef V4L2_CAMERA_HAL_STREAM_FORMAT_H_
+ #define V4L2_CAMERA_HAL_STREAM_FORMAT_H_
+ 
++#include <array>
++#include <cstdint>
+ #include <cstring>
++#include <set>
+ 
+ #include <linux/videodev2.h>
+ #include "arc/common_types.h"
+@@ -58,6 +61,12 @@ class StreamFormat {
+   // Returns -1 for unrecognized.
+   static int V4L2ToHalPixelFormat(uint32_t v4l2_pixel_format);
+ 
++  // Pick the size to capture at from the sizes the device reports for a
++  // format. Returns false if |sizes| is empty.
++  static bool GetPreferredCaptureSize(
++      const std::set<std::array<int32_t, 2>>& sizes,
++      std::array<int32_t, 2>* out_size);
++
+   // ARC++ SupportedFormat Helpers
+   static bool FindBestFitFormat(const arc::SupportedFormats& supported_formats,
+                                 const arc::SupportedFormats& qualified_formats,
 diff --git a/hardware/libhardware/modules/camera/3_4/v4l2_camera.cpp b/hardware/libhardware/modules/camera/3_4/v4l2_camera.cpp
-index 99b7a935..846a0dcb 100644
+index 99b7a935..de6628f7 100644
 --- a/hardware/libhardware/modules/camera/3_4/v4l2_camera.cpp
 +++ b/hardware/libhardware/modules/camera/3_4/v4l2_camera.cpp
-@@ -220,12 +220,12 @@ bool V4L2Camera::enqueueRequestBuffers() {
+@@ -37,7 +37,9 @@
+ 
+ namespace v4l2_camera_hal {
+ 
+-V4L2Camera* V4L2Camera::NewV4L2Camera(int id, const std::string path) {
++V4L2Camera* V4L2Camera::NewV4L2Camera(int id,
++                                      const std::string path,
++                                      bool is_front) {
+   HAL_LOG_ENTER();
+ 
+   std::shared_ptr<V4L2Wrapper> v4l2_wrapper(V4L2Wrapper::NewV4L2Wrapper(path));
+@@ -47,7 +49,7 @@ V4L2Camera* V4L2Camera::NewV4L2Camera(int id, const std::string path) {
+   }
+ 
+   std::unique_ptr<Metadata> metadata;
+-  int res = GetV4L2Metadata(v4l2_wrapper, &metadata);
++  int res = GetV4L2Metadata(v4l2_wrapper, is_front, &metadata);
+   if (res) {
+     HAL_LOGE("Failed to initialize V4L2 metadata: %d", res);
+     return nullptr;
+@@ -220,12 +222,12 @@ bool V4L2Camera::enqueueRequestBuffers() {
    // settings are used for a buffer unless we were to enqueue them
    // one at a time, which would be too slow.
  
@@ -19,10 +248,13 @@ index 99b7a935..846a0dcb 100644
    }
  
    // Replace the requested settings with a snapshot of
-@@ -328,30 +328,33 @@ int V4L2Camera::setupStreams(camera3_stream_configuration_t* stream_config) {
-   uint32_t width = stream->width;
-   uint32_t height = stream->height;
- 
+@@ -325,33 +327,58 @@ int V4L2Camera::setupStreams(camera3_stream_configuration_t* stream_config) {
+   // stream_config should have been validated; assume at least 1 stream.
+   camera3_stream_t* stream = stream_config->streams[0];
+   int format = stream->format;
+-  uint32_t width = stream->width;
+-  uint32_t height = stream->height;
+-
 -  if (stream_config->num_streams > 1) {
 -    // TODO(b/29939583):  V4L2 doesn't actually support more than 1
 -    // stream at a time. If not all streams are the same format
@@ -45,10 +277,16 @@ index 99b7a935..846a0dcb 100644
 -            stream->width,
 -            stream->height);
 -        return -EINVAL;
++  // The device captures at a single native size; the stream sizes below are
++  // left as requested and are scaled/converted from that frame on dequeue.
++  uint32_t capture_width = stream->width;
++  uint32_t capture_height = stream->height;
++
 +  // A V4L2 device can only capture one format/size at a time, while the
 +  // framework may ask for several output streams (preview + JPEG + YUV
-+  // callbacks).  Capture with a format the device really supports and convert
-+  // the frame into every requested stream buffer on dequeue (droid-kit).
++  // callbacks).  Capture with a format and size the device really supports and
++  // convert the frame into every requested stream buffer on dequeue
++  // (droid-kit).
 +  std::set<uint32_t> device_formats;
 +  if (device_->GetFormats(&device_formats) == 0 && !device_formats.empty()) {
 +    static const uint32_t kPreferredV4L2Formats[] = {
@@ -69,13 +307,41 @@ index 99b7a935..846a0dcb 100644
 +      format = chosen_hal_format;
 +      HAL_LOGV("Capturing with V4L2 format 0x%x for %u stream(s).",
 +               chosen_format, stream_config->num_streams);
++
++      // The requested stream sizes are not necessarily native to the device
++      // (the advertised output sizes are produced by scaling), so look up the
++      // real sizes for the chosen format and capture at one of them.
++      std::set<std::array<int32_t, 2>> device_sizes;
++      std::array<int32_t, 2> capture_size;
++      if (device_->GetFormatFrameSizes(chosen_format, &device_sizes) == 0 &&
++          StreamFormat::GetPreferredCaptureSize(device_sizes, &capture_size)) {
++        capture_width = static_cast<uint32_t>(capture_size[0]);
++        capture_height = static_cast<uint32_t>(capture_size[1]);
++        HAL_LOGV("Capturing at %u x %u.", capture_width, capture_height);
++      } else {
++        HAL_LOGW(
++            "Failed to get frame sizes for format 0x%x, "
++            "capturing at %u x %u.",
++            chosen_format,
++            capture_width,
++            capture_height);
++      }
 +    } else {
 +      HAL_LOGW("Device format 0x%x has no HAL equivalent.", chosen_format);
 +    }
    }
  
    // Ensure the stream is off.
-@@ -416,11 +419,11 @@ int V4L2Camera::setupStreams(camera3_stream_configuration_t* stream_config) {
+@@ -361,7 +388,7 @@ int V4L2Camera::setupStreams(camera3_stream_configuration_t* stream_config) {
+     return -ENODEV;
+   }
+ 
+-  StreamFormat stream_format(format, width, height);
++  StreamFormat stream_format(format, capture_width, capture_height);
+   uint32_t max_buffers = 0;
+   res = device_->SetFormat(stream_format, &max_buffers);
+   if (res) {
+@@ -416,11 +443,11 @@ int V4L2Camera::setupStreams(camera3_stream_configuration_t* stream_config) {
  }
  
  bool V4L2Camera::isValidRequestSettings(
@@ -92,6 +358,21 @@ index 99b7a935..846a0dcb 100644
    return true;
  }
  
+diff --git a/hardware/libhardware/modules/camera/3_4/v4l2_camera.h b/hardware/libhardware/modules/camera/3_4/v4l2_camera.h
+index ee291454..90860431 100644
+--- a/hardware/libhardware/modules/camera/3_4/v4l2_camera.h
++++ b/hardware/libhardware/modules/camera/3_4/v4l2_camera.h
+@@ -41,7 +41,9 @@ class V4L2Camera : public default_camera_hal::Camera {
+  public:
+   // Use this method to create V4L2Camera objects. Functionally equivalent
+   // to "new V4L2Camera", except that it may return nullptr in case of failure.
+-  static V4L2Camera* NewV4L2Camera(int id, const std::string path);
++  static V4L2Camera* NewV4L2Camera(int id,
++                                   const std::string path,
++                                   bool is_front);
+   ~V4L2Camera();
+ 
+  private:
 diff --git a/hardware/libhardware/modules/camera/3_4/v4l2_wrapper.cpp b/hardware/libhardware/modules/camera/3_4/v4l2_wrapper.cpp
 index bee7855f..8afe40d6 100644
 --- a/hardware/libhardware/modules/camera/3_4/v4l2_wrapper.cpp

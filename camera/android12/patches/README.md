@@ -1,37 +1,55 @@
-# AOSP 12 V4L2 HAL patches
+# AOSP 12 V4L2 HAL / gralloc patches
 
-These patches apply to the `hardware/libhardware` project of an AOSP 12 tree:
+These patches apply to the `hardware/libhardware` project of an AOSP 12 tree.
+`camera/android12/build.sh` applies them automatically (in file-name order):
 
 ```bash
 cd "$AOSP_DIR/hardware/libhardware"
-git apply -p3 /path/to/0001-v4l2-report-back-camera.patch
-git apply -p3 /path/to/0002-v4l2-hal-name.patch
-git apply -p3 /path/to/0003-v4l2-multistream-mmap.patch
-git apply -p3 /path/to/0004-gralloc-yuv.patch
+for p in /path/to/camera/android12/patches/*.patch; do
+  git apply -p3 "$p"
+done
 ```
 
 What they change:
 
-- `0001`: report `ANDROID_LENS_FACING_BACK` instead of `EXTERNAL`, and use a
-  plausible phone aperture/focal length. This is what makes the browser see a
-  normal back camera instead of an external webcam.
-- `0002`: remove obvious "V4L2" / "AOSP" strings from the HAL module name.
-- `0003`: make the HAL usable with v4l2loopback:
-  - capture with a format the device actually supports instead of rejecting
-    every multi-stream configuration (Camera1 asks for preview + JPEG,
-    Camera2/WebView asks for preview + JPEG/YUV);
-  - fill every output stream from the single V4L2 frame, converting as needed;
-  - use MMAP buffers when the driver rejects `VIDIOC_REQBUFS(USERPTR)`
-    (v4l2loopback only implements MMAP);
-  - make `VIDIOC_STREAMON` idempotent (v4l2loopback returns `EBUSY` on a second
-    call);
-  - stop rejecting requests whose optional settings the HAL does not model.
-- `0004`: add YUV support to the AOSP software gralloc (`gralloc.cpp`,
-  `mapper.cpp`): allocate `YCbCr_420_888` / YV12 / NV21 / YUYV / YCbCr_422_SP
-  and implement `(*lock_ycbcr)()`. This is what lets Camera2 ImageReaders get
-  frames on reDroid, whose stock gralloc is RGB-only.
+- `0001-v4l2-metadata-consistency.patch`
+  - `ANDROID_LENS_FACING` is now selected by a new `is_front` argument
+    (`BACK` for camera 0, `FRONT` for camera 1) instead of always `EXTERNAL`.
+  - Adds `ANDROID_DISTORTION_CORRECTION_AVAILABLE_MODES = {OFF}`.
+  - Fixes the flash/LED inconsistency: flash is unavailable and
+    `ANDROID_LED_AVAILABLE_LEDS` is a truly empty byte array (a
+    `Property<uint8_t>({}, 0)` used to mean TRANSMIT).
+  - Fixed-focus profile: AF modes `{OFF}`, minimum focus distance `0.0`.
+  - `ANDROID_SENSOR_INFO_PIXEL_ARRAY_SIZE` /
+    `ACTIVE_ARRAY_SIZE` = 1920x1080 and a matching 5.76x3.24 mm
+    `PHYSICAL_SIZE`.
+  - `ANDROID_JPEG_AVAILABLE_THUMBNAIL_SIZES` has 4 ints (two `0x0` pairs),
+    which the framework requires.
+  - Plausible phone aperture/focal length (1.8 / 4.3 mm).
+
+- `0002-v4l2-dual-camera.patch`
+  - Sorts `/dev/video*` nodes numerically and enumerates two cameras:
+    camera 0 = back, camera 1 = front.
+  - Keeps camera ids dense, fixes the leaked `closedir()`, cleans the HAL
+    module name ("Camera HAL v3" / "Google").
+
+- `0003-v4l2-multistream-mmap-multires.patch`
+  - Multi-stream output: capture once and convert into every requested
+    stream buffer (preview + JPEG + YUV callbacks).
+  - MMAP fallback when `VIDIOC_REQBUFS(USERPTR)` is rejected
+    (v4l2loopback only implements MMAP).
+  - Idempotent `VIDIOC_STREAMON` (v4l2loopback returns EBUSY on a second
+    call) and best-effort request settings.
+  - Advertises 640x480 / 1280x720 / 1920x1080 output; the HAL captures at a
+    real device size and scales per stream.
+  - Passes `is_front` through `V4L2Camera::NewV4L2Camera` into the metadata
+    factory and keeps the existing stream/MAP behaviour.
+
+- `0004-gralloc-yuv.patch`
+  - Software gralloc allocates `YCbCr_420_888` / YV12 / NV21 / YUYV /
+    YCbCr_422_SP and implements `(*lock_ycbcr)()`. Without it Camera2
+    ImageReaders fail with "Failed to allocate ... format 35".
 
 The HAL still reports `INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED`. That is
-intentional: changing it to `FULL` requires a large, consistent metadata set
-(manual sensor, RAW, stream combinations), and an inconsistent `FULL` profile is
-easier for an app to reject than an honest `LIMITED` one.
+intentional: a consistent LIMITED profile (fixed focus, no flash, no RAW) is
+less suspicious than an inconsistent FULL one.

@@ -1,42 +1,80 @@
 <!doctype html><meta charset="utf-8"><title>camtest</title>
 <script>
 function log(x){ console.log(typeof x === 'string' ? x : JSON.stringify(x)); }
-(async () => {
-  try {
-    log('secure=' + window.isSecureContext + ' media=' + !!(navigator.mediaDevices));
-    const devs = await navigator.mediaDevices.enumerateDevices();
-    log('devices=' + JSON.stringify(devs.map(d => ({kind:d.kind,label:d.label,id:d.id}))));
-    const s = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});
-    const t = s.getVideoTracks()[0];
-    log('label=' + t.label);
-    log('settings=' + JSON.stringify(t.getSettings()));
-    log('capabilities=' + JSON.stringify(t.getCapabilities()));
-    const v = document.createElement('video'); v.srcObject = s; v.muted = true;
-    v.style.width = '160px'; v.style.height = '90px';
-    document.body.appendChild(v);
-    await v.play();
-    const c = document.createElement('canvas'); c.width = 320; c.height = 240;
-    const ctx = c.getContext('2d');
-    let n = 0;
-    let vfc = 0;
-    if (v.requestVideoFrameCallback) {
-      const cb = () => { vfc++; v.requestVideoFrameCallback(cb); };
-      v.requestVideoFrameCallback(cb);
-    }
-    setTimeout(() => log('requestVideoFrameCallback count in 3s=' + vfc), 3000);
+function devices(list){ return list.map(d => ({kind:d.kind,label:d.label,id:d.id})); }
+
+async function grab(constraints, name) {
+  const s = await navigator.mediaDevices.getUserMedia({video: constraints, audio: false});
+  const t = s.getVideoTracks()[0];
+  log(name + ' label=' + t.label);
+  log(name + ' settings=' + JSON.stringify(t.getSettings()));
+  log(name + ' capabilities=' + JSON.stringify(t.getCapabilities()));
+
+  const v = document.createElement('video');
+  v.srcObject = s; v.muted = true;
+  v.style.width = '160px'; v.style.height = '90px';
+  document.body.appendChild(v);
+  await v.play();
+
+  let vfc = 0;
+  if (v.requestVideoFrameCallback) {
+    const cb = () => { vfc++; v.requestVideoFrameCallback(cb); };
+    v.requestVideoFrameCallback(cb);
+  }
+
+  const c = document.createElement('canvas');
+  c.width = 320; c.height = 240;
+  const ctx = c.getContext('2d');
+  let n = 0, sum = 0, h = 0;
+  await new Promise((resolve) => {
     const iv = setInterval(() => {
       try {
         ctx.drawImage(v, 0, 0, 320, 240);
         const d = ctx.getImageData(0, 0, 80, 40).data;
-        let sum = 0, h = 0;
+        sum = 0; h = 0;
         for (let i = 0; i < d.length; i += 4) {
           sum += d[i] + d[i+1] + d[i+2];
           h = (h * 31 + d[i] + 7*d[i+1] + 13*d[i+2]) >>> 0;
         }
-        log('frame ' + (n++) + ' sum=' + sum + ' hash=' + h + ' size=' + v.videoWidth + 'x' + v.videoHeight);
-        if (n > 5) { clearInterval(iv); log('DONE'); }
-      } catch (e) { log('frameerr ' + e); }
-    }, 500);
+        n++;
+      } catch (e) { log(name + ' frameerr ' + e); }
+      if (n >= 3) { clearInterval(iv); resolve(); }
+    }, 400);
+  });
+  log(name + ' frame size=' + v.videoWidth + 'x' + v.videoHeight +
+      ' sum=' + sum + ' hash=' + h + ' vfc=' + vfc);
+
+  s.getTracks().forEach(track => track.stop());
+  v.remove();
+  // Let the legacy HAL release the camera before opening the next one.
+  await new Promise(r => setTimeout(r, 400));
+}
+
+(async () => {
+  try {
+    log('secure=' + window.isSecureContext + ' media=' + !!(navigator.mediaDevices));
+    const devs0 = await navigator.mediaDevices.enumerateDevices();
+    log('devices=' + JSON.stringify(devices(devs0)));
+
+    // Back camera, whatever size the browser picks.
+    await grab({facingMode: {ideal: 'environment'}}, 'back');
+    // Labels are available after the first permission grant.
+    const devs1 = await navigator.mediaDevices.enumerateDevices();
+    log('devices-after-permission=' + JSON.stringify(devices(devs1)));
+
+    // Explicit sizes: 1920x1080 is upscaled by the HAL from the 1280x720 feed,
+    // 1280x720 matches the native capture size.
+    await grab({facingMode: {ideal: 'environment'},
+                width: {ideal: 1920}, height: {ideal: 1080}}, 'back1080');
+    await grab({facingMode: {ideal: 'environment'},
+                width: {ideal: 1280}, height: {ideal: 720}}, 'back720');
+
+    // Front camera (id 1).
+    await grab({facingMode: 'user'}, 'front');
+    await grab({facingMode: 'user',
+                width: {ideal: 1920}, height: {ideal: 1080}}, 'front1080');
+
+    log('DONE');
   } catch (e) { log('ERR ' + e + ' ' + e.stack); }
 })();
 </script>

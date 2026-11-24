@@ -1,0 +1,135 @@
+diff --git a/hardware/libhardware/modules/camera/3_4/v4l2_metadata_factory.cpp b/hardware/libhardware/modules/camera/3_4/v4l2_metadata_factory.cpp
+index 096951f3..710164e7 100644
+--- a/hardware/libhardware/modules/camera/3_4/v4l2_metadata_factory.cpp
++++ b/hardware/libhardware/modules/camera/3_4/v4l2_metadata_factory.cpp
+@@ -41,6 +41,7 @@ const int32_t kV4L2SensitivityDenominator = 1000;
+ const size_t kV4L2MaxJpegSize = 6000000;
+ 
+ int GetV4L2Metadata(std::shared_ptr<V4L2Wrapper> device,
++                    bool is_front,
+                     std::unique_ptr<Metadata>* result) {
+   HAL_LOG_ENTER();
+ 
+@@ -66,6 +67,12 @@ int GetV4L2Metadata(std::shared_ptr<V4L2Wrapper> device,
+         ANDROID_COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY},
+        {OTHER_TEMPLATES, ANDROID_COLOR_CORRECTION_ABERRATION_MODE_FAST}}));
+ 
++  // No distortion correction is applied for V4L2 devices; only OFF is offered.
++  components.insert(NoEffectMenuControl<uint8_t>(
++      ANDROID_DISTORTION_CORRECTION_MODE,
++      ANDROID_DISTORTION_CORRECTION_AVAILABLE_MODES,
++      {ANDROID_DISTORTION_CORRECTION_MODE_OFF}));
++
+   // TODO(b/30510395): subcomponents of 3A.
+   // In general, default to ON/AUTO since they imply pretty much nothing,
+   // while OFF implies guarantees about not hindering performance.
+@@ -328,15 +335,17 @@ int GetV4L2Metadata(std::shared_ptr<V4L2Wrapper> device,
+   components.insert(
+       NoEffectMenuControl<float>(ANDROID_LENS_APERTURE,
+                                  ANDROID_LENS_INFO_AVAILABLE_APERTURES,
+-                                 {2.0}));  // RPi camera v2 is f/2.0.
+-  // Always assume external-facing.
+-  components.insert(
+-      std::unique_ptr<PartialMetadataInterface>(new Property<uint8_t>(
+-          ANDROID_LENS_FACING, ANDROID_LENS_FACING_EXTERNAL)));
++                                 {1.8}));  // droid-kit: plausible phone aperture.
++  // droid-kit: present the V4L2 device as a normal back/front-facing camera
++  // depending on how the HAL enumerated it.
++  components.insert(std::unique_ptr<PartialMetadataInterface>(
++      new Property<uint8_t>(ANDROID_LENS_FACING, is_front
++                                                     ? ANDROID_LENS_FACING_FRONT
++                                                     : ANDROID_LENS_FACING_BACK)));
+   components.insert(
+       NoEffectMenuControl<float>(ANDROID_LENS_FOCAL_LENGTH,
+                                  ANDROID_LENS_INFO_AVAILABLE_FOCAL_LENGTHS,
+-                                 {3.04}));  // RPi camera v2 is 3.04mm.
++                                 {4.3}));  // droid-kit: plausible phone focal length.
+   // No known way to get filter densities from V4L2,
+   // report 0 to indicate this control is not supported.
+   components.insert(
+@@ -353,10 +362,12 @@ int GetV4L2Metadata(std::shared_ptr<V4L2Wrapper> device,
+   // fixed-focus it meets expectations. Framework may allow
+   // setting any value and expect it to be clamped to 0, in which
+   // case this will have unexpected behavior (failing on non-0 settings).
++  // Fixed focus: minimum focus distance 0.0 means infinity, and the only
++  // advertised AF mode is OFF (see ANDROID_CONTROL_AF_AVAILABLE_MODES).
+   components.insert(
+       NoEffectMenuControl<float>(ANDROID_LENS_FOCUS_DISTANCE,
+                                  ANDROID_LENS_INFO_MINIMUM_FOCUS_DISTANCE,
+-                                 {0}));
++                                 {0.0f}));
+   // Hypefocal distance doesn't mean much for a fixed-focus uncalibrated device.
+   components.insert(std::make_unique<Property<float>>(
+       ANDROID_LENS_INFO_HYPERFOCAL_DISTANCE, 0));
+@@ -428,13 +439,16 @@ int GetV4L2Metadata(std::shared_ptr<V4L2Wrapper> device,
+        {OTHER_TEMPLATES, ANDROID_NOISE_REDUCTION_MODE_FAST}}));
+ 
+   // TODO(30510395): subcomponents of formats/streams.
+-  // For now, no thumbnails available (only [0,0], the "no thumbnail" size).
++  // For now, no thumbnails available. The "no thumbnail" size is expressed as
++  // two {0,0} pairs; the framework requires at least 4 ints in this tag.
+   // TODO(b/29580107): Could end up with a mismatch between request & result,
+   // since V4L2 doesn't actually allow for thumbnail size control.
++  const std::vector<std::array<int32_t, 2>> thumbnail_sizes = {{{0, 0}},
++                                                              {{0, 0}}};
+   components.insert(NoEffectMenuControl<std::array<int32_t, 2>>(
+       ANDROID_JPEG_THUMBNAIL_SIZE,
+       ANDROID_JPEG_AVAILABLE_THUMBNAIL_SIZES,
+-      {{{0, 0}}}));
++      thumbnail_sizes));
+   // TODO(b/31022752): Get this from the device, not constant.
+   components.insert(std::unique_ptr<PartialMetadataInterface>(
+       new Property<int32_t>(ANDROID_JPEG_MAX_SIZE, kV4L2MaxJpegSize)));
+@@ -476,8 +490,9 @@ int GetV4L2Metadata(std::shared_ptr<V4L2Wrapper> device,
+   components.insert(std::unique_ptr<PartialMetadataInterface>(
+       new Property<uint8_t>(ANDROID_SCALER_CROPPING_TYPE,
+                             ANDROID_SCALER_CROPPING_TYPE_FREEFORM)));
+-  // Spoof pixel array size for now, eventually get from CROPCAP.
+-  std::array<int32_t, 2> pixel_array_size = {{3280, 2464}};
++  // droid-kit: spoof pixel array size to match the largest advertised output
++  // (1920x1080), so the framework doesn't believe the sensor is 8MP.
++  std::array<int32_t, 2> pixel_array_size = {{1920, 1080}};
+   components.insert(std::unique_ptr<PartialMetadataInterface>(
+       new Property<std::array<int32_t, 2>>(ANDROID_SENSOR_INFO_PIXEL_ARRAY_SIZE,
+                                            pixel_array_size)));
+@@ -493,12 +508,13 @@ int GetV4L2Metadata(std::shared_ptr<V4L2Wrapper> device,
+   // restricting it to not being used anyways this works for now.
+   components.insert(NoEffectMenuControl<std::array<int32_t, 4>>(
+       ANDROID_SCALER_CROP_REGION, DO_NOT_REPORT_OPTIONS, {active_array_size}));
+-  // No way to get in V4L2, so faked. RPi camera v2 is 3.674 x 2.760 mm.
++  // No way to get in V4L2, so faked. droid-kit: 5.76 x 3.24 mm is a plausible
++  // 1/3.2" 1080p (16:9) sensor, consistent with the 1920x1080 pixel array.
+   // Physical size is used in framework calculations (field of view,
+   // pixel pitch, etc.), so faking it may have unexpected results.
+   components.insert(std::unique_ptr<PartialMetadataInterface>(
+       new Property<std::array<float, 2>>(ANDROID_SENSOR_INFO_PHYSICAL_SIZE,
+-                                         {{3.674, 2.760}})));
++                                         {{5.76f, 3.24f}})));
+   // HAL uses BOOTTIME timestamps.
+   // TODO(b/29457051): make sure timestamps are consistent throughout the HAL.
+   components.insert(std::unique_ptr<PartialMetadataInterface>(
+@@ -535,9 +551,10 @@ int GetV4L2Metadata(std::shared_ptr<V4L2Wrapper> device,
+ 
+   // TOOD(b/31023265): V4L2_CID_FLASH_INDICATOR_INTENSITY could be queried
+   // to see if there's a transmit LED. Would need to translate HAL off/on
+-  // enum to slider min/max value. For now, no LEDs available.
++  // enum to slider min/max value. For now, no LEDs available: this must be an
++  // empty byte array (a Property<uint8_t> of 0 would mean TRANSMIT).
+   components.insert(std::unique_ptr<PartialMetadataInterface>(
+-      new Property<uint8_t>(ANDROID_LED_AVAILABLE_LEDS, {})));
++      new Property<std::vector<uint8_t>>(ANDROID_LED_AVAILABLE_LEDS, {})));
+ 
+   /* Capabilities. */
+   // The V4L2Metadata pretends to at least meet the
+diff --git a/hardware/libhardware/modules/camera/3_4/v4l2_metadata_factory.h b/hardware/libhardware/modules/camera/3_4/v4l2_metadata_factory.h
+index f25a370f..e2370a66 100644
+--- a/hardware/libhardware/modules/camera/3_4/v4l2_metadata_factory.h
++++ b/hardware/libhardware/modules/camera/3_4/v4l2_metadata_factory.h
+@@ -27,6 +27,7 @@ namespace v4l2_camera_hal {
+ // A static function to get a Metadata object populated with V4L2 or other
+ // controls as appropriate.
+ int GetV4L2Metadata(std::shared_ptr<V4L2Wrapper> device,
++                    bool is_front,
+                     std::unique_ptr<Metadata>* result);
+ 
+ }  // namespace v4l2_camera_hal

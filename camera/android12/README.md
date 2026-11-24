@@ -68,23 +68,44 @@ docker start droid-kit-12-img
 ```
 
 The image contains the same HAL/gralloc/provider/rc/media profiles and the
-`ro.hardware.camera=v4l2` / `ro.hardware.gralloc=v4l2` properties. Verified:
-1 camera device, facing Back, WebView label `camera2 0, facing back`.
+`ro.hardware.camera=v4l2` / `ro.hardware.gralloc=v4l2` properties. Rebuild the
+image after changing the HAL. With both host devices mapped
+(`--device /dev/video10:/dev/video0 --device /dev/video11:/dev/video1`) it
+exposes 2 cameras (0 back, 1 front).
 
 ## Host video source
 
 ```bash
 ../host/setup-v4l2loopback.sh
-../host/feed.sh /path/to/video.mp4          # yuyv422 1280x720 by default
+../host/feed.sh /path/to/video.mp4          # back, yuyv422 1280x720 by default
 # or a test pattern:
 ffmpeg -re -f lavfi -i testsrc2=size=1280x720:rate=30 \
   -pix_fmt yuyv422 -f v4l2 /dev/video10
 ```
 
+`setup-v4l2loopback.sh` creates two devices: `/dev/video10` (back, camera 0)
+and `/dev/video11` (front, camera 1). Feed both before starting the container:
+with `exclusive_caps=1` an unfed loopback node does not advertise capture
+support, and the legacy HAL has no hotplug.
+
+```bash
+../host/feed.sh back.mp4                 # VIDEO_NR=10 by default
+VIDEO_NR=11 ../host/feed.sh front.mp4
+```
+
+`run.sh` maps `VIDEO_DEV` (default `/dev/video10`) to `/dev/video0` and, if
+`VIDEO_DEV2` (default `/dev/video11`) exists, also
+`--device /dev/video11:/dev/video1`. With only the back device present the
+container still starts and exposes one camera.
+
 ## Run
 
 ```bash
+# single back camera (fallback container, 5556)
 PORT=5556 ./run.sh
+
+# dual camera + 640x480/1280x720/1920x1080 metadata (5557)
+PORT=5557 ./run-5557.sh
 ```
 
 `run.sh` uses `docker create` + `docker cp` (not `-v`) and sets
@@ -95,24 +116,44 @@ PORT=5556 ./run.sh
 
 ```bash
 ./check-artifacts.sh
-PORT=5556 ../verify/verify-camera.sh
+PORT=5557 ../verify/verify-camera.sh
+PORT=5557 ../verify/verify-metadata.sh
 ```
 
-Expected:
+Expected with both feeds running:
 
 ```text
-ro.hardware.camera=v4l2
-Number of camera devices: 1
+Number of camera devices: 2
 Facing: Back
+Facing: Front
 ```
 
-WebView check: `../verify/camtest/` (see its README). Verified output:
+`verify-metadata.sh` checks the upgraded static metadata (13 checks):
 
 ```text
-I CAMTEST : console: label=camera2 0, facing back
-I CAMTEST : console: frame 0 sum=856512 hash=2518866944 size=1280x720
-I CAMTEST : console: requestVideoFrameCallback count in 3s=30
+PASS  camera count is 2
+PASS  API1 facing Back present
+PASS  API1 facing Front present
+PASS  distortionCorrection.availableModes contains OFF
+PASS  flash.info.available is FALSE
+PASS  led.availableLeds has no TRANSMIT (empty list)
+PASS  sensor.info.pixelArraySize is 1920 1080
+PASS  sensor.info.activeArraySize ends with 1920 1080
+PASS  jpeg.availableThumbnailSizes has 4 values
+PASS  stream config 640x480 present
+PASS  stream config 1280x720 present
+PASS  stream config 1920x1080 present
 ```
 
-`camera2` is the Chromium prefix for the Camera2 API; `facing back` comes from
-the HAL's `ANDROID_LENS_FACING_BACK`.
+WebView check: `../verify/camtest/` (see its README). Verified output on 5557:
+
+```text
+I CAMTEST : console: back label=camera2 0, facing back
+I CAMTEST : console: front label=camera2 1, facing front
+I CAMTEST : console: back frame size=640x480 ... vfc=16
+I CAMTEST : console: front frame size=640x480 ... vfc=17
+```
+
+The stock camera app produces a 1920x1080 JPEG on 5557, which exercises the
+1080p upscale + JPEG path. `camera2` is the Chromium prefix for the Camera2
+API; the facing values come from the HAL metadata.
