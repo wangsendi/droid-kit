@@ -5,6 +5,8 @@
   `run-5557.sh`).
 - `camera/host/` — creates two v4l2loopback devices (`video10` back,
   `video11` front) and feeds them with ffmpeg.
+- Nova live receiving (WebRTC / HTTP WebM) is a separate host-side toolkit and
+  is not shipped in this repo.
 - `camera/verify/` — `verify-camera.sh`, `verify-metadata.sh`, and the
   WebView `camtest` app (back/front + explicit sizes).
 
