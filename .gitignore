@@ -25,3 +25,7 @@ camera/verify/camtest/build/
 # Python
 __pycache__/
 *.pyc
+
+# Browser APK build outputs
+camera/verify/browser/build/
+camera/verify/browser/debug.keystore

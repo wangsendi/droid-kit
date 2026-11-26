@@ -66,6 +66,9 @@ COPY camera/android12/files/manifest-camera.xml /staged/vendor/etc/vintf/manifes
 COPY camera/android12/files/camera-ns-fix.rc /staged/vendor/etc/init/camera-ns-fix.rc
 COPY camera/android12/files/media_profiles_V1_0.xml /staged/system/etc/media_profiles_V1_0.xml
 
+# Built-in WebView browser (camera/mic permission handled in-app).
+COPY camera/verify/browser/browser.apk /staged/system/app/DroidKitBrowser/DroidKitBrowser.apk
+
 COPY --from=base /vendor/build.prop /staged/vendor/build.prop
 COPY --from=base /system/build.prop /staged/system/build.prop
 

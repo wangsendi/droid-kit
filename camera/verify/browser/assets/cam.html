@@ -1,0 +1,37 @@
+<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<body style="font:18px sans-serif;padding:12px;background:#111;color:#eee">
+<h3>虚拟摄像头测试</h3>
+<video id="v" autoplay playsinline muted
+       style="width:100%;max-width:480px;background:#000"></video>
+<div id="out" style="margin:8px 0">...</div>
+<div>
+<button onclick="start('environment')">后摄(默认)</button>
+<button onclick="start('environment',720,1280)">后摄720x1280</button>
+<button onclick="start('environment',640,480)">后摄640x480</button>
+<button onclick="start('user')">前摄</button>
+<button onclick="stop()">停止</button>
+</div>
+<script>
+let stream = null;
+async function start(face, w, h) {
+  stop();
+  const out = document.getElementById('out');
+  out.textContent = '请求中...';
+  const video = {facingMode: {ideal: face}};
+  if (w && h) { video.width = {ideal: w}; video.height = {ideal: h}; }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({video: video, audio: false});
+    document.getElementById('v').srcObject = stream;
+    const t = stream.getVideoTracks()[0];
+    out.textContent = 'OK ' + t.label + ' ' + JSON.stringify(t.getSettings());
+  } catch (e) {
+    out.textContent = 'ERR ' + e.name + ' ' + e.message;
+  }
+}
+function stop() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  document.getElementById('v').srcObject = null;
+}
+start('environment');
+</script>

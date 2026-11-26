@@ -318,6 +318,9 @@ boot-complete)
         pm install /system/etc/init/magisk/magisk.apk >/dev/null 2>&1 \
             && log "manager reinstalled"
     fi
+    # 内置浏览器：预授权相机/麦克风，WebView getUserMedia 首次即可用。
+    pm grant org.droidkit.browser android.permission.CAMERA >/dev/null 2>&1
+    pm grant org.droidkit.browser android.permission.RECORD_AUDIO >/dev/null 2>&1
     set_battery
     log "=== boot-complete done ==="
     touch "${MARKERS}/boot-complete-done" 2>/dev/null
