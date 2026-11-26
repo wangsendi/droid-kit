@@ -6,6 +6,10 @@
 # A producer (feed.sh) must be writing to a device before the container starts:
 # exclusive_caps=1 means a loopback node only advertises V4L2_CAP_VIDEO_CAPTURE
 # while something is streaming into it, and the legacy HAL has no hotplug.
+#
+# max_height=1920 allows portrait feeds (e.g. 1080x1920) so the camera can
+# follow the pushed resolution. v4l2loopback >= 0.13.2 is required: 0.12.7
+# leaves the device unusable (VIDIOC_G_FMT EINVAL) after a producer closes.
 set -euo pipefail
 
 VIDEO_NR=${VIDEO_NR:-10}
@@ -22,7 +26,7 @@ if [[ ! -d /sys/module/v4l2loopback ]]; then
     video_nr="$VIDEO_NR,$VIDEO_NR2" \
     card_label="$CARD_LABEL,$CARD_LABEL2" \
     exclusive_caps=1 \
-    max_width=1920 max_height=1080 max_fps=30
+    max_width=1920 max_height=1920 max_fps=30
 fi
 
 # udev often does not run in containers, so /dev nodes can be missing even

@@ -1,0 +1,18 @@
+--- a/hardware/libhardware/modules/camera/3_4/format_metadata_factory.cpp
++++ b/hardware/libhardware/modules/camera/3_4/format_metadata_factory.cpp
+@@ -212,7 +212,14 @@
+           v4l2_format);
+     }
+ 
+-    for (const auto& frame_size : kCommonFrameSizes) {
++    // Advertise the size the device actually reports (the producer's push
++    // resolution) plus the common scaled sizes, deduplicated. This lets the
++    // camera follow whatever resolution the host feeds without rebuilding.
++    std::set<std::array<int32_t, 2>> advertised_sizes(frame_sizes);
++    for (const auto& s : kCommonFrameSizes) {
++      advertised_sizes.insert({s[0], s[1]});
++    }
++    for (const auto& frame_size : advertised_sizes) {
+       // Note the format and size combination in stream configs.
+       stream_configs.push_back(
+           {{hal_format,
