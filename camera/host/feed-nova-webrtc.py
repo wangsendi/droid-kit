@@ -27,6 +27,7 @@ Environment:
   OUT_W/OUT_H default 1280x720
   FPS         default 30
   OUTPUT      default /dev/video$VIDEO_NR; "null" for a decode-only test
+  FIT         cover (fill+crop) or contain (letterbox); default cover
   POLL        default 2 seconds
 """
 import asyncio
@@ -52,6 +53,7 @@ FPS = int(os.environ.get("FPS", "30"))
 POLL = float(os.environ.get("POLL", "2"))
 OUTPUT = os.environ.get("OUTPUT", f"/dev/video{VIDEO_NR}")
 FFMPEG = os.environ.get("FFMPEG", "ffmpeg")
+FIT = os.environ.get("FIT", "cover").lower()
 FIRST_FRAME_TIMEOUT = float(os.environ.get("FIRST_FRAME_TIMEOUT", "20"))
 IDLE_TIMEOUT = float(os.environ.get("IDLE_TIMEOUT", "15"))
 
@@ -68,11 +70,15 @@ class FFmpegWriter:
         self.frames = 0
 
     async def start(self):
+        # Keep the source upright. cover (default): fill the frame and crop;
+        # contain: show the whole portrait frame with side bars.
         vf = []
-        if self.width < self.height:
-            vf.append("transpose=1")
-        vf.append(f"scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=decrease")
-        vf.append(f"pad={OUT_W}:{OUT_H}:(ow-iw)/2:(oh-ih)/2")
+        if FIT == "contain":
+            vf.append(f"scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=decrease")
+            vf.append(f"pad={OUT_W}:{OUT_H}:(ow-iw)/2:(oh-ih)/2")
+        else:
+            vf.append(f"scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase")
+            vf.append(f"crop={OUT_W}:{OUT_H}")
         if OUTPUT == "null":
             sink = ["-f", "null", "-"]
         else:

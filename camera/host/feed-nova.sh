@@ -31,6 +31,7 @@ OUT_W=${OUT_W:-1280}
 OUT_H=${OUT_H:-720}
 FPS=${FPS:-30}
 PIX_FMT=${PIX_FMT:-yuyv422}
+FIT=${FIT:-cover}
 POLL=${POLL:-2}
 CURL=${CURL:-curl}
 FFMPEG=${FFMPEG:-ffmpeg}
@@ -88,13 +89,13 @@ while true; do
 
     url="$NOVA_BASE/api/stream/preview.webm?group_id=$(urlencode "$gid")&session_id=$(urlencode "$sid")"
 
-    # Nova's live output is portrait (e.g. 1080x1920). Rotate it into the
-    # landscape frame the camera HAL expects, then scale/pad to OUT_W x OUT_H.
-    vf="scale=$OUT_W:$OUT_H:force_original_aspect_ratio=decrease"
-    if [[ "$width" -lt "$height" ]]; then
-        vf="transpose=1,$vf"
+    # Keep the source upright. cover: fill the camera frame and crop;
+    # contain: show the whole portrait frame with side bars.
+    if [[ "$FIT" == "contain" ]]; then
+        vf="scale=$OUT_W:$OUT_H:force_original_aspect_ratio=decrease,pad=$OUT_W:$OUT_H:(ow-iw)/2:(oh-ih)/2"
+    else
+        vf="scale=$OUT_W:$OUT_H:force_original_aspect_ratio=increase,crop=$OUT_W:$OUT_H"
     fi
-    vf="$vf,pad=$OUT_W:$OUT_H:(ow-iw)/2:(oh-ih)/2"
 
     cmd=("$FFMPEG" -nostdin -hide_banner -loglevel warning \
         -fflags nobuffer -flags low_delay \
