@@ -21,3 +21,7 @@ data/
 /screen*.png
 camera/android12/*.log
 camera/verify/camtest/build/
+
+# Python
+__pycache__/
+*.pyc
